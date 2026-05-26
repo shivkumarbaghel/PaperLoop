@@ -809,6 +809,16 @@ main {
   line-height: 1.78;
 }
 
+.action-feedback {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 90, 76, 0.18);
+  border-radius: 8px;
+  color: #174c42;
+  background: #edf6f0;
+  font-weight: 800;
+}
+
 .article-side-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);

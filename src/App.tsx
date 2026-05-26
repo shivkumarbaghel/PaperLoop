@@ -43,7 +43,19 @@ import {
   mockContent,
   type PaperLoopContent,
 } from "./services/contentRepository";
-import type { ArticlePost, Campaign, Edition, MetricCard, Publisher } from "./types";
+import {
+  createArticleComment,
+  recordEngagement,
+  type EngagementType,
+} from "./services/engagementRepository";
+import type {
+  ArticlePost,
+  Campaign,
+  Comment,
+  Edition,
+  MetricCard,
+  Publisher,
+} from "./types";
 
 type View = "dashboard" | "reader" | "article" | "admin";
 
@@ -214,8 +226,13 @@ function App() {
 
         {activeView === "article" && (
           <ArticleView
+            key={selectedArticle.id}
             article={selectedArticle}
+            authUser={authUser}
             onBack={() => setActiveView("reader")}
+            onAuthRequired={() =>
+              setAuthError("Please sign in with Gmail to use subscriber actions.")
+            }
           />
         )}
 
@@ -670,10 +687,65 @@ function ReaderView({
 
 interface ArticleViewProps {
   article: ArticlePost;
+  authUser: User | null;
   onBack: () => void;
+  onAuthRequired: () => void;
 }
 
-function ArticleView({ article, onBack }: ArticleViewProps) {
+function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewProps) {
+  const [comments, setComments] = useState<Comment[]>(() => article.comments);
+  const [commentBody, setCommentBody] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [pendingAction, setPendingAction] = useState<EngagementType | "post" | "">("");
+
+  async function handleEngagement(type: EngagementType) {
+    if (!authUser) {
+      onAuthRequired();
+      return;
+    }
+
+    setFeedback("");
+    setPendingAction(type);
+
+    try {
+      await recordEngagement({
+        article,
+        type,
+        user: authUser,
+        metadata: { source: "article_detail" },
+      });
+
+      setFeedback(`${capitalize(type)} recorded for this article.`);
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : "Unable to record this action.",
+      );
+    } finally {
+      setPendingAction("");
+    }
+  }
+
+  async function handleCommentSubmit() {
+    if (!authUser) {
+      onAuthRequired();
+      return;
+    }
+
+    setFeedback("");
+    setPendingAction("post");
+
+    try {
+      const nextComment = await createArticleComment(article, commentBody, authUser);
+      setComments((currentComments) => [nextComment, ...currentComments]);
+      setCommentBody("");
+      setFeedback("Comment posted to the subscriber discussion.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Unable to post comment.");
+    } finally {
+      setPendingAction("");
+    }
+  }
+
   return (
     <section className="article-layout">
       <button className="back-button" onClick={onBack}>
@@ -705,18 +777,18 @@ function ArticleView({ article, onBack }: ArticleViewProps) {
                 {article.author.publication} • {article.author.followers.toLocaleString()} followers
               </span>
             </div>
-            <button>
+            <button onClick={() => handleEngagement("follow")} disabled={pendingAction === "follow"}>
               <Bell size={18} />
-              Follow
+              {pendingAction === "follow" ? "Following..." : "Follow"}
             </button>
           </div>
           <p>{article.body}</p>
           <div className="engagement-row">
-            <button>
+            <button onClick={() => handleEngagement("save")} disabled={pendingAction === "save"}>
               <Bookmark size={18} />
               {article.stats.saves.toLocaleString()}
             </button>
-            <button>
+            <button onClick={() => handleEngagement("share")} disabled={pendingAction === "share"}>
               <Share2 size={18} />
               {article.stats.shares.toLocaleString()}
             </button>
@@ -724,11 +796,12 @@ function ArticleView({ article, onBack }: ArticleViewProps) {
               <MessageCircle size={18} />
               {article.stats.comments}
             </button>
-            <button>
+            <button onClick={() => handleEngagement("report")} disabled={pendingAction === "report"}>
               <Flag size={18} />
-              Report
+              {pendingAction === "report" ? "Reporting..." : "Report"}
             </button>
           </div>
+          {feedback && <p className="action-feedback">{feedback}</p>}
         </div>
       </article>
 
@@ -757,17 +830,21 @@ function ArticleView({ article, onBack }: ArticleViewProps) {
             <h2>Discussion</h2>
           </div>
           <div className="comment-composer">
-            <textarea placeholder="Add a subscriber comment" />
-            <button>
+            <textarea
+              value={commentBody}
+              onChange={(event) => setCommentBody(event.target.value)}
+              placeholder="Add a subscriber comment"
+            />
+            <button onClick={handleCommentSubmit} disabled={pendingAction === "post"}>
               <MessageCircle size={18} />
-              Post
+              {pendingAction === "post" ? "Posting..." : "Post"}
             </button>
           </div>
           <div className="comment-list">
-            {article.comments.length === 0 ? (
+            {comments.length === 0 ? (
               <p className="empty-state">No comments yet. Start the discussion.</p>
             ) : (
-              article.comments.map((comment) => (
+              comments.map((comment) => (
                 <article className="comment-card" key={comment.id}>
                   <div>
                     <strong>{comment.userName}</strong>
@@ -782,6 +859,10 @@ function ArticleView({ article, onBack }: ArticleViewProps) {
       </div>
     </section>
   );
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 interface AdminViewProps {
