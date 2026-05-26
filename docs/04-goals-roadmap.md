@@ -16,14 +16,15 @@ Supporting definition:
 
 ## Current Implementation Status
 
-Firebase bootstrap is the active prerequisite before continuing Phase 1 implementation.
+Firebase bootstrap is complete enough to validate Phase 1 upload flows.
 
 - React/Vite app, Firebase web config, Google login code path, Firestore content fallback, security rules, and seed tooling exist.
 - Project `paperloop-2e121` has an unusable Firestore database named `default`; it was created with Firestore Native API data access disabled.
-- The app requires the SDK-compatible `(default)` Firestore database, the default Firebase Storage bucket, and Firebase Authentication Google provider setup.
-- Creating the additional `(default)` database and Storage bucket is currently blocked until billing is enabled on the Firebase project.
+- The SDK-compatible `(default)` Firestore database exists in `asia-south1`, starter collections are seeded, and Firestore rules are deployed.
+- The default Firebase Storage bucket exists in `ASIA-SOUTH1`, Storage rules are deployed, and Firebase Authentication Google provider is enabled.
+- The Phase 1 publisher workspace now includes staff-only edition draft metadata and source asset upload UI.
 
-After Firebase setup is verified, the next active product milestone remains Phase 1: Publisher And Edition Foundation.
+The next active product milestone remains Phase 1: Publisher And Edition Foundation.
 
 ## 90-Day MVP Goals
 

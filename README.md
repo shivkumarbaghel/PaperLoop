@@ -59,38 +59,39 @@ Verified on 2026-05-27:
 - Firebase project and web app exist.
 - Hosting is available.
 - A Firestore database named `default` exists, but it was created with Firestore Native API data access disabled and MongoDB-compatible data access enabled. The Firebase JS SDK and Admin SDK cannot use that database.
-- The SDK-compatible `(default)` Firestore database is still required.
-- The default Firebase Storage bucket does not exist yet.
-- Firebase Auth API is enabled, but Authentication is not configured yet. `firebase auth:export` currently returns `CONFIGURATION_NOT_FOUND`.
-- Creating the additional `(default)` Firestore database or Storage bucket is blocked until billing is enabled on the project.
+- The SDK-compatible `(default)` Firestore database exists in `asia-south1`.
+- Starter Firestore collections have been seeded: `publishers`, `editions`, `articlePosts`, `metrics`, and `campaigns`.
+- Firestore and Storage rules have been deployed.
+- The default Firebase Storage bucket exists: `paperloop-2e121.firebasestorage.app` in `ASIA-SOUTH1`.
+- Firebase Authentication is initialized and Google sign-in is enabled.
 
 ### Required Firebase Setup
 
-1. Enable billing for `paperloop-2e121`.
-
-2. Create the SDK-compatible Firestore database without deleting the existing `default` database:
-
-   ```bash
-   gcloud firestore databases create \
-     --project=paperloop-2e121 \
-     --database="(default)" \
-     --location=asia-south1 \
-     --type=firestore-native \
-     --edition=standard \
-     --quiet
-   ```
-
-3. Verify both databases:
+1. Verify the SDK-compatible Firestore database without deleting the existing `default` database:
 
    ```bash
    firebase firestore:databases:list --project paperloop-2e121
    ```
 
-4. Create the default Firebase Storage bucket in the Firebase Console:
+2. Seed starter content with a service account:
+
+   ```bash
+   # Option A: place serviceAccountKey.json in the project root.
+   # Option B: export GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
+   npm run seed:firestore
+   ```
+
+3. Verify the default Firebase Storage bucket:
+
+   ```bash
+   gcloud storage buckets describe gs://paperloop-2e121.firebasestorage.app
+   ```
+
+4. If the bucket is missing, create it in the Firebase Console:
    - Bucket: `paperloop-2e121.firebasestorage.app`
    - Location: `asia-south1`
 
-5. Enable Google authentication in the Firebase Console:
+5. Verify Google authentication in the Firebase Console:
    - Authentication > Sign-in method > Google.
    - Authorized domains should include `localhost` and `paperloop-2e121.firebaseapp.com`.
 
@@ -100,15 +101,7 @@ Verified on 2026-05-27:
    firebase deploy --only firestore:rules,storage --project paperloop-2e121
    ```
 
-7. Seed starter content with a service account:
-
-   ```bash
-   # Option A: place serviceAccountKey.json in the project root.
-   # Option B: export GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
-   npm run seed:firestore
-   ```
-
-8. Bootstrap authorization by setting one or more seed env vars before running the seed:
+7. Bootstrap authorization by setting one or more seed env vars before running the seed:
 
    ```bash
    export PAPERLOOP_SEED_SUPER_ADMIN_UID=google-auth-uid
@@ -126,4 +119,4 @@ Google login creates a locked-down `reader` profile by default. Publisher worksp
 - `FAILED_PRECONDITION: Access to this database via the Firestore in Native mode API is disabled` means a command is hitting the unusable `default` database instead of `(default)`.
 - Empty Firestore collections after setup means `npm run seed:firestore` has not completed successfully.
 - `CONFIGURATION_NOT_FOUND` from Auth export means Firebase Authentication still needs to be initialized in the console.
-- Storage bucket creation fails with billing errors until project billing is enabled.
+- Storage bucket creation through `gcloud storage` can fail with Firebase-managed domain ownership errors. Use Firebase Console > Storage > Get started for the default bucket.

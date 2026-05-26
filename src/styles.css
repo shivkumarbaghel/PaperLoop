@@ -144,7 +144,9 @@ a {
 .hero-actions button,
 .publisher-card button,
 .comment-composer button,
-.admin-hero button {
+.admin-hero button,
+.admin-action,
+.edition-form button {
   color: #fff;
   background: #165a4c;
 }
@@ -856,6 +858,12 @@ main {
   font-weight: 800;
 }
 
+.action-feedback.error {
+  color: #7c1d1d;
+  background: #fff0ef;
+  border-color: #f1b8b2;
+}
+
 .article-side-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
@@ -935,6 +943,10 @@ main {
   font-size: clamp(2rem, 5vw, 4rem);
 }
 
+.admin-action {
+  flex: 0 0 auto;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -963,6 +975,43 @@ main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
+}
+
+.edition-form {
+  display: grid;
+  gap: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.edition-form label {
+  display: grid;
+  gap: 7px;
+  color: #3c4843;
+  font-weight: 800;
+}
+
+.edition-form input,
+.edition-form select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #21332d;
+  background: #fffdf8;
+}
+
+.edition-form input[type="file"] {
+  padding: 10px;
+}
+
+.edition-form button {
+  justify-self: start;
 }
 
 .strategy-panel {
@@ -995,6 +1044,28 @@ main {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.draft-list {
+  display: grid;
+  gap: 10px;
+}
+
+.draft-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(43, 59, 52, 0.1);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.draft-card span,
+.draft-card small {
+  display: block;
+  margin-top: 4px;
+  color: #69746f;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1021,6 +1092,7 @@ main {
   .reader-layout,
   .article-panel,
   .article-side-grid,
+  .form-grid,
   .admin-grid {
     grid-template-columns: 1fr;
   }

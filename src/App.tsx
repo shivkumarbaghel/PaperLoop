@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import type { User } from "firebase/auth";
 import {
   ArrowLeft,
@@ -40,6 +47,7 @@ import {
 } from "./firebase";
 import {
   canOpenAdminWorkspace,
+  canManagePlatform,
   canReadArticle,
   canReadEdition,
   canUseDiscussion,
@@ -56,6 +64,7 @@ import {
   recordEngagement,
   type EngagementType,
 } from "./services/engagementRepository";
+import { createEditionDraft } from "./services/publisherWorkspaceRepository";
 import {
   emptyUserAccess,
   getUserAccess,
@@ -64,6 +73,7 @@ import {
 } from "./services/userRepository";
 import type {
   ArticlePost,
+  AccessRule,
   Campaign,
   Comment,
   Edition,
@@ -323,8 +333,11 @@ function App() {
         {activeView === "admin" && (
           <AdminView
             campaigns={campaigns}
+            editions={editions}
             metrics={metrics}
             profile={profile}
+            publishers={publishers}
+            authUser={authUser}
             userAccess={userAccess}
           />
         )}
@@ -1046,13 +1059,104 @@ function capitalize(value: string) {
 }
 
 interface AdminViewProps {
+  authUser: User | null;
   campaigns: Campaign[];
+  editions: Edition[];
   metrics: MetricCard[];
   profile: UserProfile | null;
+  publishers: Publisher[];
   userAccess: UserAccess;
 }
 
-function AdminView({ campaigns, metrics, profile, userAccess }: AdminViewProps) {
+function AdminView({
+  authUser,
+  campaigns,
+  editions,
+  metrics,
+  profile,
+  publishers,
+  userAccess,
+}: AdminViewProps) {
+  const accessiblePublishers = useMemo(
+    () =>
+      canManagePlatform(profile)
+        ? publishers
+        : publishers.filter((publisher) =>
+            userAccess.staffPublisherIds.includes(publisher.id),
+          ),
+    [profile, publishers, userAccess.staffPublisherIds],
+  );
+  const fallbackPublisher = accessiblePublishers[0] ?? publishers[0];
+  const [draftPublisherId, setDraftPublisherId] = useState(
+    fallbackPublisher?.id ?? "",
+  );
+  const selectedDraftPublisher =
+    accessiblePublishers.find((publisher) => publisher.id === draftPublisherId) ??
+    fallbackPublisher;
+  const selectedDraftPublisherId = selectedDraftPublisher?.id ?? "";
+  const [draftTitle, setDraftTitle] = useState("Today edition");
+  const [draftDate, setDraftDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [draftCity, setDraftCity] = useState(fallbackPublisher?.city ?? "");
+  const [draftLanguage, setDraftLanguage] = useState(
+    fallbackPublisher?.language ?? "Hindi",
+  );
+  const [draftAccessRule, setDraftAccessRule] = useState<AccessRule>("public");
+  const [draftSections, setDraftSections] = useState("मुख पृष्ठ, शहर");
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [createdDrafts, setCreatedDrafts] = useState<Edition[]>([]);
+  const [uploadStatus, setUploadStatus] = useState<
+    "idle" | "uploading" | "success" | "error"
+  >("idle");
+  const [uploadMessage, setUploadMessage] = useState("");
+
+  async function handleDraftSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser || !sourceFile) {
+      setUploadStatus("error");
+      setUploadMessage("Sign in and choose a PDF or page image before uploading.");
+      return;
+    }
+
+    setUploadStatus("uploading");
+    setUploadMessage("");
+
+    try {
+      const nextDraft = await createEditionDraft(
+        {
+          publisherId: selectedDraftPublisherId,
+          title: draftTitle,
+          date: draftDate,
+          city: draftCity,
+          language: draftLanguage,
+          accessRule: draftAccessRule,
+          sections: draftSections
+            .split(",")
+            .map((section) => section.trim())
+            .filter(Boolean),
+          sourceFile,
+        },
+        authUser,
+      );
+
+      setCreatedDrafts((currentDrafts) => [nextDraft, ...currentDrafts]);
+      setSourceFile(null);
+      setUploadStatus("success");
+      setUploadMessage("Edition draft uploaded for staff review.");
+    } catch (error) {
+      setUploadStatus("error");
+      setUploadMessage(
+        error instanceof Error ? error.message : "Unable to create edition draft.",
+      );
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setSourceFile(event.target.files?.[0] ?? null);
+  }
+
   if (!canOpenAdminWorkspace(profile, userAccess)) {
     return (
       <section className="admin-layout">
@@ -1074,10 +1178,10 @@ function AdminView({ campaigns, metrics, profile, userAccess }: AdminViewProps) 
           <span className="eyebrow">Super admin + publisher workspace</span>
           <h1>Manage agencies, editions, subscriptions, ads, and content strategy.</h1>
         </div>
-        <button>
+        <a href="#edition-upload" className="admin-action">
           <FileUp size={18} />
           New edition upload
-        </button>
+        </a>
       </div>
 
       <div className="metric-grid">
@@ -1091,6 +1195,111 @@ function AdminView({ campaigns, metrics, profile, userAccess }: AdminViewProps) 
       </div>
 
       <div className="admin-grid">
+        <section className="workspace-panel" id="edition-upload">
+          <div className="section-heading compact">
+            <span className="eyebrow">Publisher workspace</span>
+            <h2>New edition draft</h2>
+          </div>
+          {accessiblePublishers.length === 0 ? (
+            <p className="empty-state">No publisher workspace is assigned to this account.</p>
+          ) : (
+            <form className="edition-form" onSubmit={handleDraftSubmit}>
+              <div className="form-grid">
+                <label>
+                  <span>Publisher</span>
+                  <select
+                    value={selectedDraftPublisherId}
+                    onChange={(event) => {
+                      const nextPublisher = accessiblePublishers.find(
+                        (publisher) => publisher.id === event.target.value,
+                      );
+
+                      setDraftPublisherId(event.target.value);
+
+                      if (nextPublisher) {
+                        setDraftCity(nextPublisher.city);
+                        setDraftLanguage(nextPublisher.language);
+                      }
+                    }}
+                  >
+                    {accessiblePublishers.map((publisher) => (
+                      <option key={publisher.id} value={publisher.id}>
+                        {publisher.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Title</span>
+                  <input
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    placeholder="Narmada Times - Jabalpur"
+                  />
+                </label>
+                <label>
+                  <span>Date</span>
+                  <input
+                    type="date"
+                    value={draftDate}
+                    onChange={(event) => setDraftDate(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>City</span>
+                  <input
+                    value={draftCity}
+                    onChange={(event) => setDraftCity(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Language</span>
+                  <input
+                    value={draftLanguage}
+                    onChange={(event) => setDraftLanguage(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Access</span>
+                  <select
+                    value={draftAccessRule}
+                    onChange={(event) =>
+                      setDraftAccessRule(event.target.value as AccessRule)
+                    }
+                  >
+                    <option value="public">Public</option>
+                    <option value="subscriber_only">Subscriber only</option>
+                    <option value="staff_only">Staff only</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                <span>Sections</span>
+                <input
+                  value={draftSections}
+                  onChange={(event) => setDraftSections(event.target.value)}
+                  placeholder="मुख पृष्ठ, शहर, बिज़नेस"
+                />
+              </label>
+              <label>
+                <span>Source PDF or page image</span>
+                <input
+                  type="file"
+                  accept="application/pdf,image/png,image/jpeg,image/webp"
+                  onChange={handleFileChange}
+                />
+              </label>
+              <button disabled={uploadStatus === "uploading"}>
+                <FileUp size={18} />
+                {uploadStatus === "uploading" ? "Uploading..." : "Upload draft"}
+              </button>
+              {uploadMessage && (
+                <p className={`action-feedback ${uploadStatus}`}>{uploadMessage}</p>
+              )}
+            </form>
+          )}
+        </section>
+
         <section className="workspace-panel">
           <div className="section-heading compact">
             <span className="eyebrow">Upload workflow</span>
@@ -1144,6 +1353,32 @@ function AdminView({ campaigns, metrics, profile, userAccess }: AdminViewProps) 
             <Insight icon={<TrendingUp size={20} />} title="High reach" text="Civic stories drive 31% more shares than average." />
             <Insight icon={<MessageCircle size={20} />} title="Feedback" text="Parents ask for school-wise safety lists." />
             <Insight icon={<CircleDollarSign size={20} />} title="Revenue" text="Education ads convert best beside subscriber-only stories." />
+          </div>
+        </section>
+
+        <section className="workspace-panel strategy-panel">
+          <div className="section-heading compact">
+            <span className="eyebrow">Edition drafts</span>
+            <h2>Recent workspace records</h2>
+          </div>
+          <div className="draft-list">
+            {[...createdDrafts, ...editions.filter((edition) => edition.status !== "published")]
+              .slice(0, 6)
+              .map((edition) => (
+                <article className="draft-card" key={edition.id}>
+                  <div>
+                    <strong>{edition.title}</strong>
+                    <span>
+                      {edition.city} • {edition.date} • {edition.status}
+                    </span>
+                  </div>
+                  <small>{edition.sourceAssetName ?? "Metadata only"}</small>
+                </article>
+              ))}
+            {createdDrafts.length === 0 &&
+              editions.filter((edition) => edition.status !== "published").length === 0 && (
+                <p className="empty-state">No draft editions uploaded yet.</p>
+              )}
           </div>
         </section>
       </div>

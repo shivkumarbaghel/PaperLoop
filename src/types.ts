@@ -53,6 +53,12 @@ export interface Edition {
   status: EditionStatus;
   accessRule: AccessRule;
   pages: Page[];
+  sourceAssetPath?: string;
+  sourceAssetUrl?: string;
+  sourceAssetType?: string;
+  sourceAssetName?: string;
+  sourceAssetSize?: number;
+  createdBy?: string;
 }
 
 export interface Page {
