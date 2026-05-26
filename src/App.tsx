@@ -38,8 +38,12 @@ import {
   signOutUser,
   subscribeToAuth,
 } from "./firebase";
-import { articles, campaigns, editions, metrics, publishers } from "./data/mockData";
-import type { ArticlePost, Publisher } from "./types";
+import {
+  getPaperLoopContent,
+  mockContent,
+  type PaperLoopContent,
+} from "./services/contentRepository";
+import type { ArticlePost, Campaign, Edition, MetricCard, Publisher } from "./types";
 
 type View = "dashboard" | "reader" | "article" | "admin";
 
@@ -49,8 +53,12 @@ const topics = ["All", "Local", "Politics", "Business", "Education", "Culture"];
 
 function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
-  const [selectedPublisherId, setSelectedPublisherId] = useState(publishers[0].id);
-  const [selectedArticleId, setSelectedArticleId] = useState(articles[0].id);
+  const [selectedPublisherId, setSelectedPublisherId] = useState(
+    mockContent.publishers[0].id,
+  );
+  const [selectedArticleId, setSelectedArticleId] = useState(
+    mockContent.articles[0].id,
+  );
   const [search, setSearch] = useState("");
   const [language, setLanguage] = useState("All");
   const [region, setRegion] = useState("All");
@@ -59,8 +67,40 @@ function App() {
   const [zoom, setZoom] = useState(1);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState("");
+  const [content, setContent] = useState<PaperLoopContent>(mockContent);
+  const [contentStatus, setContentStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+
+  const { publishers, editions, articles, metrics, campaigns } = content;
 
   useEffect(() => subscribeToAuth(setAuthUser), []);
+
+  useEffect(() => {
+    let active = true;
+
+    getPaperLoopContent()
+      .then((nextContent) => {
+        if (!active) {
+          return;
+        }
+
+        setContent(nextContent);
+        setContentStatus("ready");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        setContent(mockContent);
+        setContentStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selectedPublisher = publishers.find(
     (publisher) => publisher.id === selectedPublisherId,
@@ -92,7 +132,7 @@ function App() {
         return matchesSearch && matchesLanguage && matchesRegion && matchesTopic;
       })
       .sort((a, b) => b.popularityScore + b.relevanceScore - (a.popularityScore + a.relevanceScore));
-  }, [language, region, search, topic]);
+  }, [language, publishers, region, search, topic]);
 
   function openReader(publisher: Publisher) {
     setSelectedPublisherId(publisher.id);
@@ -145,6 +185,8 @@ function App() {
         {activeView === "dashboard" && (
           <Dashboard
             filteredPublishers={filteredPublishers}
+            contentSource={content.source}
+            contentStatus={contentStatus}
             search={search}
             language={language}
             region={region}
@@ -159,6 +201,7 @@ function App() {
 
         {activeView === "reader" && (
           <ReaderView
+            articles={articles}
             publisher={selectedPublisher}
             edition={selectedEdition}
             pageIndex={pageIndex}
@@ -176,7 +219,9 @@ function App() {
           />
         )}
 
-        {activeView === "admin" && <AdminView />}
+        {activeView === "admin" && (
+          <AdminView campaigns={campaigns} metrics={metrics} />
+        )}
       </main>
     </div>
   );
@@ -255,6 +300,8 @@ function Header({
 
 interface DashboardProps {
   filteredPublishers: Publisher[];
+  contentSource: PaperLoopContent["source"];
+  contentStatus: "loading" | "ready" | "error";
   search: string;
   language: string;
   region: string;
@@ -268,6 +315,8 @@ interface DashboardProps {
 
 function Dashboard({
   filteredPublishers,
+  contentSource,
+  contentStatus,
   search,
   language,
   region,
@@ -280,6 +329,7 @@ function Dashboard({
 }: DashboardProps) {
   const leadingPublishers = filteredPublishers.filter((publisher) => publisher.isLeading);
   const regionalPublishers = filteredPublishers.filter((publisher) => !publisher.isLeading);
+  const featuredPublisher = filteredPublishers[0] ?? mockContent.publishers[0];
 
   return (
     <section className="page-grid dashboard-grid">
@@ -291,8 +341,20 @@ function Dashboard({
             PaperLoop brings e-paper pages, article posts, columnist profiles, and
             publisher analytics into one responsive React + Firebase platform.
           </p>
+          <div className={`data-source ${contentStatus}`}>
+            <ShieldCheck size={16} />
+            <span>
+              {contentStatus === "loading"
+                ? "Loading newspaper data"
+                : contentStatus === "error"
+                  ? "Firestore unavailable; showing demo data"
+                  : contentSource === "firestore"
+                    ? "Live Firestore content"
+                    : "Demo content until Firestore is seeded"}
+            </span>
+          </div>
           <div className="hero-actions">
-            <button onClick={() => onOpenReader(publishers[0])}>
+            <button onClick={() => onOpenReader(featuredPublisher)}>
               <BookOpen size={18} />
               Open today's edition
             </button>
@@ -453,8 +515,9 @@ function PublisherSection({
 }
 
 interface ReaderViewProps {
+  articles: ArticlePost[];
   publisher: Publisher;
-  edition: (typeof editions)[number];
+  edition: Edition;
   pageIndex: number;
   zoom: number;
   onPageIndex: (value: number) => void;
@@ -463,6 +526,7 @@ interface ReaderViewProps {
 }
 
 function ReaderView({
+  articles,
   publisher,
   edition,
   pageIndex,
@@ -720,7 +784,12 @@ function ArticleView({ article, onBack }: ArticleViewProps) {
   );
 }
 
-function AdminView() {
+interface AdminViewProps {
+  campaigns: Campaign[];
+  metrics: MetricCard[];
+}
+
+function AdminView({ campaigns, metrics }: AdminViewProps) {
   return (
     <section className="admin-layout">
       <div className="admin-hero">

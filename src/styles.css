@@ -272,6 +272,24 @@ main {
   margin-top: 28px;
 }
 
+.data-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  color: #eef8f2;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.data-source.error {
+  color: #fff8d8;
+}
+
 .hero-actions a {
   color: #15362f;
   background: #fff;

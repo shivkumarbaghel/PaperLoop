@@ -9,7 +9,13 @@ import {
   type Auth,
   type User,
 } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import {
+  doc,
+  getFirestore,
+  serverTimestamp,
+  setDoc,
+  type Firestore,
+} from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -79,7 +85,23 @@ export async function signInWithGoogle() {
 
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
-  return signInWithPopup(firebase.auth, provider);
+  const credential = await signInWithPopup(firebase.auth, provider);
+
+  await setDoc(
+    doc(firebase.db, "users", credential.user.uid),
+    {
+      id: credential.user.uid,
+      name: credential.user.displayName,
+      email: credential.user.email,
+      avatarUrl: credential.user.photoURL,
+      role: "reader",
+      provider: "google",
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return credential;
 }
 
 export async function signOutUser() {
