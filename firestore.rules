@@ -88,7 +88,7 @@ service cloud.firestore {
       ])
       && request.resource.data.id == userId
       && request.resource.data.role == "reader"
-      && request.resource.data.provider == "google"
+      && request.resource.data.provider in ["google", "password"]
       && request.resource.data.status == "active";
     }
 
@@ -101,7 +101,7 @@ service cloud.firestore {
         "languagePreference",
         "updatedAt"
       ])
-      && request.resource.data.provider == "google"
+      && request.resource.data.provider in ["google", "password"]
       && request.resource.data.diff(resource.data).affectedKeys().hasNone(immutableUserKeys());
     }
 

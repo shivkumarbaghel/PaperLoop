@@ -3,9 +3,13 @@ import { getAnalytics, isSupported, type Analytics } from "firebase/analytics";
 import {
   getAuth,
   GoogleAuthProvider,
+  getRedirectResult,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithRedirect,
   signInWithPopup,
   signOut,
+  type UserCredential,
   type Auth,
   type User,
 } from "firebase/auth";
@@ -87,7 +91,66 @@ export async function signInWithGoogle() {
 
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
-  const credential = await signInWithPopup(firebase.auth, provider);
+  try {
+    const credential = await signInWithPopup(firebase.auth, provider);
+
+    await syncAuthProfile(credential, "google");
+
+    return credential;
+  } catch (error) {
+    if (isPopupBlockedError(error)) {
+      await signInWithRedirect(firebase.auth, provider);
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function signInWithEmailPassword(email: string, password: string) {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured. Add your Firebase env values first.");
+  }
+
+  const credential = await signInWithEmailAndPassword(
+    firebase.auth,
+    email.trim(),
+    password,
+  );
+
+  await syncAuthProfile(credential, "password");
+
+  return credential;
+}
+
+export async function completeGoogleRedirectSignIn() {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return null;
+  }
+
+  const credential = await getRedirectResult(firebase.auth);
+
+  if (credential) {
+    await syncAuthProfile(credential, "google");
+  }
+
+  return credential;
+}
+
+async function syncAuthProfile(
+  credential: UserCredential,
+  provider: "google" | "password",
+) {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return;
+  }
+
   const userRef = doc(firebase.db, "users", credential.user.uid);
   const userSnapshot = await getDoc(userRef);
 
@@ -96,7 +159,7 @@ export async function signInWithGoogle() {
       name: credential.user.displayName,
       email: credential.user.email,
       avatarUrl: credential.user.photoURL,
-      provider: "google",
+      provider,
       updatedAt: serverTimestamp(),
     });
   } else {
@@ -106,14 +169,21 @@ export async function signInWithGoogle() {
       email: credential.user.email,
       avatarUrl: credential.user.photoURL,
       role: "reader",
-      provider: "google",
+      provider,
       status: "active",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   }
+}
 
-  return credential;
+function isPopupBlockedError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "auth/popup-blocked"
+  );
 }
 
 export async function signOutUser() {

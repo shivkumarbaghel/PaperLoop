@@ -1,5 +1,13 @@
 import type { User } from "firebase/auth";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+} from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
 import type { AccessRule, Edition } from "../types";
@@ -84,6 +92,36 @@ export async function createEditionDraft(
   return edition;
 }
 
+export async function getPublisherWorkspaceEditions(
+  publisherIds: string[],
+): Promise<Edition[]> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase || publisherIds.length === 0) {
+    return [];
+  }
+
+  const snapshots = await Promise.all(
+    chunk(publisherIds, 10).map((publisherIdChunk) =>
+      getDocs(
+        query(
+          collection(firebase.db, "editions"),
+          where("publisherId", "in", publisherIdChunk),
+        ),
+      ),
+    ),
+  );
+
+  return snapshots
+    .flatMap((snapshot) =>
+      snapshot.docs.map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      })) as Edition[],
+    )
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
 function validateDraftInput(input: EditionDraftInput) {
   if (!input.publisherId || !input.title.trim() || !input.date || !input.city.trim()) {
     throw new Error("Publisher, title, date, and city are required.");
@@ -120,4 +158,14 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+function chunk<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
 }

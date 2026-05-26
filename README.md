@@ -63,7 +63,8 @@ Verified on 2026-05-27:
 - Starter Firestore collections have been seeded: `publishers`, `editions`, `articlePosts`, `metrics`, and `campaigns`.
 - Firestore and Storage rules have been deployed.
 - The default Firebase Storage bucket exists: `paperloop-2e121.firebasestorage.app` in `ASIA-SOUTH1`.
-- Firebase Authentication is initialized and Google sign-in is enabled.
+- Firebase Authentication is initialized with Google and Email/Password sign-in enabled.
+- The Nepro admin account is bootstrapped as a `super_admin` with Storage upload claims.
 
 ### Required Firebase Setup
 
@@ -111,7 +112,7 @@ Verified on 2026-05-27:
    npm run seed:firestore
    ```
 
-Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
+Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Storage upload authorization uses Firebase Auth custom claims seeded by `npm run seed:firestore` when the matching Auth user already exists. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
 
 ### Firebase Troubleshooting
 

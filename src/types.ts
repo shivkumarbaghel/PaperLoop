@@ -155,7 +155,7 @@ export interface UserProfile {
   email: string | null;
   avatarUrl: string | null;
   role: UserRole;
-  provider: "google";
+  provider: "google" | "password";
   status: AccountStatus;
   languagePreference?: string;
 }

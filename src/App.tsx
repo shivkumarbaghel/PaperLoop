@@ -40,7 +40,9 @@ import {
   ZoomOut,
 } from "lucide-react";
 import {
+  completeGoogleRedirectSignIn,
   isFirebaseConfigured,
+  signInWithEmailPassword,
   signInWithGoogle,
   signOutUser,
   subscribeToAuth,
@@ -64,7 +66,10 @@ import {
   recordEngagement,
   type EngagementType,
 } from "./services/engagementRepository";
-import { createEditionDraft } from "./services/publisherWorkspaceRepository";
+import {
+  createEditionDraft,
+  getPublisherWorkspaceEditions,
+} from "./services/publisherWorkspaceRepository";
 import {
   emptyUserAccess,
   getUserAccess,
@@ -103,6 +108,9 @@ function App() {
   const [pageIndex, setPageIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [emailLogin, setEmailLogin] = useState("");
+  const [passwordLogin, setPasswordLogin] = useState("");
+  const [authPending, setAuthPending] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [userAccess, setUserAccess] = useState<UserAccess>(emptyUserAccess);
   const [accessStatus, setAccessStatus] = useState<
@@ -131,6 +139,14 @@ function App() {
       }),
     [],
   );
+
+  useEffect(() => {
+    completeGoogleRedirectSignIn().catch((error) => {
+      setAuthError(
+        error instanceof Error ? error.message : "Unable to complete Google sign in.",
+      );
+    });
+  }, []);
 
   useEffect(() => {
     if (!authUser) {
@@ -245,11 +261,29 @@ function App() {
 
   async function handleGoogleLogin() {
     setAuthError("");
+    setAuthPending(true);
 
     try {
       await signInWithGoogle();
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Unable to sign in.");
+    } finally {
+      setAuthPending(false);
+    }
+  }
+
+  async function handleEmailLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthError("");
+    setAuthPending(true);
+
+    try {
+      await signInWithEmailPassword(emailLogin, passwordLogin);
+      setPasswordLogin("");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Unable to sign in.");
+    } finally {
+      setAuthPending(false);
     }
   }
 
@@ -258,10 +292,16 @@ function App() {
       <Header
         activeView={activeView}
         authUser={authUser}
+        emailLogin={emailLogin}
+        passwordLogin={passwordLogin}
+        authPending={authPending}
         profile={profile}
         accessStatus={accessStatus}
         canOpenAdmin={canOpenAdminWorkspace(profile, userAccess)}
         onNavigate={navigate}
+        onEmail={setEmailLogin}
+        onPassword={setPasswordLogin}
+        onEmailSignIn={handleEmailLogin}
         onSignIn={handleGoogleLogin}
         onSignOut={signOutUser}
       />
@@ -349,10 +389,16 @@ function App() {
 interface HeaderProps {
   activeView: View;
   authUser: User | null;
+  emailLogin: string;
+  passwordLogin: string;
+  authPending: boolean;
   profile: UserProfile | null;
   accessStatus: "signed_out" | "loading" | "ready" | "error";
   canOpenAdmin: boolean;
   onNavigate: (view: View) => void;
+  onEmail: (value: string) => void;
+  onPassword: (value: string) => void;
+  onEmailSignIn: (event: FormEvent<HTMLFormElement>) => void;
   onSignIn: () => void;
   onSignOut: () => void;
 }
@@ -360,10 +406,16 @@ interface HeaderProps {
 function Header({
   activeView,
   authUser,
+  emailLogin,
+  passwordLogin,
+  authPending,
   profile,
   accessStatus,
   canOpenAdmin,
   onNavigate,
+  onEmail,
+  onPassword,
+  onEmailSignIn,
   onSignIn,
   onSignOut,
 }: HeaderProps) {
@@ -419,10 +471,41 @@ function Header({
             </button>
           </>
         ) : (
-          <button className="login-button" onClick={onSignIn}>
-            <Globe2 size={18} />
-            Gmail login
-          </button>
+          <form className="login-form" onSubmit={onEmailSignIn}>
+            <label>
+              <span className="sr-only">Email</span>
+              <input
+                type="email"
+                value={emailLogin}
+                onChange={(event) => onEmail(event.target.value)}
+                placeholder="admin email"
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              <span className="sr-only">Password</span>
+              <input
+                type="password"
+                value={passwordLogin}
+                onChange={(event) => onPassword(event.target.value)}
+                placeholder="password"
+                autoComplete="current-password"
+              />
+            </label>
+            <button disabled={authPending}>
+              <UserRound size={18} />
+              {authPending ? "Signing in..." : "Sign in"}
+            </button>
+            <button
+              className="login-button"
+              type="button"
+              onClick={onSignIn}
+              disabled={authPending}
+            >
+              <Globe2 size={18} />
+              Gmail
+            </button>
+          </form>
         )}
       </div>
     </header>
@@ -1106,10 +1189,44 @@ function AdminView({
   const [draftSections, setDraftSections] = useState("मुख पृष्ठ, शहर");
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [createdDrafts, setCreatedDrafts] = useState<Edition[]>([]);
+  const [workspaceEditions, setWorkspaceEditions] = useState<Edition[]>([]);
+  const [workspaceStatus, setWorkspaceStatus] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
   const [uploadStatus, setUploadStatus] = useState<
     "idle" | "uploading" | "success" | "error"
   >("idle");
   const [uploadMessage, setUploadMessage] = useState("");
+  const workspacePublisherIds = useMemo(
+    () => accessiblePublishers.map((publisher) => publisher.id),
+    [accessiblePublishers],
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    getPublisherWorkspaceEditions(workspacePublisherIds)
+      .then((nextEditions) => {
+        if (!active) {
+          return;
+        }
+
+        setWorkspaceEditions(nextEditions);
+        setWorkspaceStatus("ready");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        setWorkspaceEditions([]);
+        setWorkspaceStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [workspacePublisherIds]);
 
   async function handleDraftSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1362,7 +1479,14 @@ function AdminView({
             <h2>Recent workspace records</h2>
           </div>
           <div className="draft-list">
-            {[...createdDrafts, ...editions.filter((edition) => edition.status !== "published")]
+            {workspaceStatus === "error" && (
+              <p className="empty-state">Unable to load workspace editions.</p>
+            )}
+            {[...createdDrafts, ...workspaceEditions, ...editions.filter((edition) => edition.status !== "published")]
+              .filter(
+                (edition, index, editionList) =>
+                  editionList.findIndex((item) => item.id === edition.id) === index,
+              )
               .slice(0, 6)
               .map((edition) => (
                 <article className="draft-card" key={edition.id}>
@@ -1376,7 +1500,9 @@ function AdminView({
                 </article>
               ))}
             {createdDrafts.length === 0 &&
-              editions.filter((edition) => edition.status !== "published").length === 0 && (
+              workspaceEditions.length === 0 &&
+              editions.filter((edition) => edition.status !== "published").length === 0 &&
+              workspaceStatus !== "error" && (
                 <p className="empty-state">No draft editions uploaded yet.</p>
               )}
           </div>

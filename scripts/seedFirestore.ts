@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { applicationDefault, cert, initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import {
   articles,
@@ -69,6 +70,7 @@ const app = initializeApp({
 });
 
 const db = getFirestore(app, firestoreDatabaseId);
+const auth = getAuth(app);
 
 if (!projectId) {
   throw new Error(
@@ -116,28 +118,32 @@ async function seedAccessFixtures() {
         name: process.env.PAPERLOOP_SEED_SUPER_ADMIN_NAME ?? "PaperLoop Admin",
         email: process.env.PAPERLOOP_SEED_SUPER_ADMIN_EMAIL ?? null,
         avatarUrl: null,
-        provider: "google",
+        provider: process.env.PAPERLOOP_SEED_SUPER_ADMIN_PROVIDER ?? "google",
         role: "super_admin",
         status: "active",
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
+    await setRoleClaims(superAdminUid, "super_admin", [publisherId]);
     console.log("Seeded super admin user.");
   }
 
   if (staffUid) {
+    const staffRole = process.env.PAPERLOOP_SEED_PUBLISHER_STAFF_ROLE ?? "publisher_admin";
+
     await db.collection("publisherStaff").doc(`${publisherId}_${staffUid}`).set(
       {
         id: `${publisherId}_${staffUid}`,
         userId: staffUid,
         publisherId,
-        role: process.env.PAPERLOOP_SEED_PUBLISHER_STAFF_ROLE ?? "publisher_admin",
+        role: staffRole,
         status: "active",
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
+    await setRoleClaims(staffUid, staffRole, [publisherId]);
     console.log("Seeded publisher staff membership.");
   }
 
@@ -154,6 +160,25 @@ async function seedAccessFixtures() {
       { merge: true },
     );
     console.log("Seeded reader subscription.");
+  }
+}
+
+async function setRoleClaims(userId: string, role: string, publisherIds: string[]) {
+  try {
+    const user = await auth.getUser(userId);
+    const existingPublisherIds = Array.isArray(user.customClaims?.publisherIds)
+      ? user.customClaims.publisherIds
+      : [];
+
+    await auth.setCustomUserClaims(userId, {
+      ...user.customClaims,
+      role,
+      publisherIds: [...new Set([...existingPublisherIds, ...publisherIds])],
+    });
+  } catch {
+    console.warn(
+      `Skipped custom claims for ${userId}; create the Firebase Auth user first.`,
+    );
   }
 }
 

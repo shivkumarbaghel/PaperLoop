@@ -21,8 +21,9 @@ Firebase bootstrap is complete enough to validate Phase 1 upload flows.
 - React/Vite app, Firebase web config, Google login code path, Firestore content fallback, security rules, and seed tooling exist.
 - Project `paperloop-2e121` has an unusable Firestore database named `default`; it was created with Firestore Native API data access disabled.
 - The SDK-compatible `(default)` Firestore database exists in `asia-south1`, starter collections are seeded, and Firestore rules are deployed.
-- The default Firebase Storage bucket exists in `ASIA-SOUTH1`, Storage rules are deployed, and Firebase Authentication Google provider is enabled.
+- The default Firebase Storage bucket exists in `ASIA-SOUTH1`, Storage rules are deployed, and Firebase Authentication Google plus Email/Password providers are enabled.
 - The Phase 1 publisher workspace now includes staff-only edition draft metadata and source asset upload UI.
+- The Nepro admin account is bootstrapped as a super admin for role-based testing.
 
 The next active product milestone remains Phase 1: Publisher And Edition Foundation.
 

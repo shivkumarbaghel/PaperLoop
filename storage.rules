@@ -6,28 +6,14 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function userPath() {
-      return /databases/(default)/documents/users/$(request.auth.uid);
-    }
-
-    function userRole() {
-      return signedIn() && firestore.exists(userPath())
-        ? firestore.get(userPath()).data.role
-        : "";
-    }
-
     function isPlatformAdmin() {
-      return userRole() in ["platform_admin", "super_admin"];
-    }
-
-    function staffPath(publisherId) {
-      return /databases/(default)/documents/publisherStaff/$(publisherId + "_" + request.auth.uid);
+      return signedIn() && request.auth.token.role in ["platform_admin", "super_admin"];
     }
 
     function publisherStaff(publisherId) {
       return signedIn()
-        && firestore.exists(staffPath(publisherId))
-        && firestore.get(staffPath(publisherId)).data.status == "active";
+        && request.auth.token.publisherIds is list
+        && publisherId in request.auth.token.publisherIds;
     }
 
     function canManagePublisher(publisherId) {
@@ -36,7 +22,11 @@ service firebase.storage {
 
     function safeAsset() {
       return request.resource.size < 25 * 1024 * 1024
-        && request.resource.contentType.matches("(image/.*|video/.*|application/pdf)");
+        && (
+          request.resource.contentType == "application/pdf"
+          || request.resource.contentType.matches("image/.*")
+          || request.resource.contentType.matches("video/.*")
+        );
     }
 
     match /publishers/{publisherId}/{allPaths=**} {

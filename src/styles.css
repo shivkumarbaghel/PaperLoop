@@ -158,6 +158,29 @@ a {
   gap: 8px;
 }
 
+.login-form {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-form input {
+  width: 145px;
+  min-height: 40px;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: #21332d;
+  background: #fffdf8;
+}
+
+.login-form button {
+  color: #fff;
+  background: #165a4c;
+}
+
 .user-chip {
   display: inline-flex;
   align-items: center;
