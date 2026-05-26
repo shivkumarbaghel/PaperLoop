@@ -24,6 +24,7 @@ const projectId =
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 const serviceAccountPath =
   process.env.GOOGLE_APPLICATION_CREDENTIALS ?? resolve("serviceAccountKey.json");
+const firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID ?? "(default)";
 
 function loadLocalEnv() {
   const envPath = resolve(".env");
@@ -62,12 +63,12 @@ function getCredential() {
   return applicationDefault();
 }
 
-initializeApp({
+const app = initializeApp({
   credential: getCredential(),
   projectId,
 });
 
-const db = getFirestore();
+const db = getFirestore(app, firestoreDatabaseId);
 
 if (!projectId) {
   throw new Error(
@@ -157,7 +158,7 @@ async function seedAccessFixtures() {
 }
 
 async function main() {
-  console.log(`Seeding Firestore project: ${projectId}`);
+  console.log(`Seeding Firestore project: ${projectId}, database: ${firestoreDatabaseId}`);
   await writeCollection("publishers", publishers);
   await writeCollection("editions", editions);
   await writeCollection("articlePosts", articles);
@@ -174,7 +175,7 @@ main().catch((error: unknown) => {
     console.error(
       [
         `Firestore database was not found for project "${projectId}".`,
-        "Create the default Firestore database in Firebase Console using Native mode, then rerun `npm run seed:firestore`.",
+        `Create the SDK-compatible "${firestoreDatabaseId}" Firestore database in Native mode, then rerun \`npm run seed:firestore\`.`,
         "If the database already exists, verify the service account has Cloud Datastore User or Firebase Admin access.",
       ].join("\n"),
     );

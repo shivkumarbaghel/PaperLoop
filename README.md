@@ -50,23 +50,57 @@ Native mobile apps, advanced AI/OCR automation, full social automation, affiliat
    npm run build
    ```
 
-## Firebase Setup
+## Firebase Bootstrap Status
 
-1. Create a Firebase project and enable:
-   - Authentication: Google provider.
-   - Firestore Database: native mode.
-   - Storage.
-   - Hosting.
+Current project: `paperloop-2e121`.
 
-2. Add the web app config values to `.env` using `.env.example`.
+Verified on 2026-05-27:
 
-3. Deploy the security rules:
+- Firebase project and web app exist.
+- Hosting is available.
+- A Firestore database named `default` exists, but it was created with Firestore Native API data access disabled and MongoDB-compatible data access enabled. The Firebase JS SDK and Admin SDK cannot use that database.
+- The SDK-compatible `(default)` Firestore database is still required.
+- The default Firebase Storage bucket does not exist yet.
+- Firebase Auth API is enabled, but Authentication is not configured yet. `firebase auth:export` currently returns `CONFIGURATION_NOT_FOUND`.
+- Creating the additional `(default)` Firestore database or Storage bucket is blocked until billing is enabled on the project.
+
+### Required Firebase Setup
+
+1. Enable billing for `paperloop-2e121`.
+
+2. Create the SDK-compatible Firestore database without deleting the existing `default` database:
 
    ```bash
-   firebase deploy --only firestore:rules,storage
+   gcloud firestore databases create \
+     --project=paperloop-2e121 \
+     --database="(default)" \
+     --location=asia-south1 \
+     --type=firestore-native \
+     --edition=standard \
+     --quiet
    ```
 
-4. Seed starter content with a service account:
+3. Verify both databases:
+
+   ```bash
+   firebase firestore:databases:list --project paperloop-2e121
+   ```
+
+4. Create the default Firebase Storage bucket in the Firebase Console:
+   - Bucket: `paperloop-2e121.firebasestorage.app`
+   - Location: `asia-south1`
+
+5. Enable Google authentication in the Firebase Console:
+   - Authentication > Sign-in method > Google.
+   - Authorized domains should include `localhost` and `paperloop-2e121.firebaseapp.com`.
+
+6. Deploy the security rules:
+
+   ```bash
+   firebase deploy --only firestore:rules,storage --project paperloop-2e121
+   ```
+
+7. Seed starter content with a service account:
 
    ```bash
    # Option A: place serviceAccountKey.json in the project root.
@@ -74,7 +108,7 @@ Native mobile apps, advanced AI/OCR automation, full social automation, affiliat
    npm run seed:firestore
    ```
 
-5. Bootstrap authorization by setting one or more seed env vars before running the seed:
+8. Bootstrap authorization by setting one or more seed env vars before running the seed:
 
    ```bash
    export PAPERLOOP_SEED_SUPER_ADMIN_UID=google-auth-uid
@@ -85,3 +119,11 @@ Native mobile apps, advanced AI/OCR automation, full social automation, affiliat
    ```
 
 Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
+
+### Firebase Troubleshooting
+
+- `5 NOT_FOUND` from `npm run seed:firestore` usually means the SDK-compatible `(default)` Firestore database is missing.
+- `FAILED_PRECONDITION: Access to this database via the Firestore in Native mode API is disabled` means a command is hitting the unusable `default` database instead of `(default)`.
+- Empty Firestore collections after setup means `npm run seed:firestore` has not completed successfully.
+- `CONFIGURATION_NOT_FOUND` from Auth export means Firebase Authentication still needs to be initialized in the console.
+- Storage bucket creation fails with billing errors until project billing is enabled.

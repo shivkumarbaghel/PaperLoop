@@ -1,6 +1,6 @@
 # PaperLoop Goals And Roadmap
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 ## North-Star Goal
 
@@ -13,6 +13,17 @@ North-star metric:
 Supporting definition:
 
 - An engaged subscriber reads at least one edition page or article post and performs at least one meaningful action in a week, such as saving, sharing, commenting, following a columnist, or returning to a discussion.
+
+## Current Implementation Status
+
+Firebase bootstrap is the active prerequisite before continuing Phase 1 implementation.
+
+- React/Vite app, Firebase web config, Google login code path, Firestore content fallback, security rules, and seed tooling exist.
+- Project `paperloop-2e121` has an unusable Firestore database named `default`; it was created with Firestore Native API data access disabled.
+- The app requires the SDK-compatible `(default)` Firestore database, the default Firebase Storage bucket, and Firebase Authentication Google provider setup.
+- Creating the additional `(default)` database and Storage bucket is currently blocked until billing is enabled on the Firebase project.
+
+After Firebase setup is verified, the next active product milestone remains Phase 1: Publisher And Edition Foundation.
 
 ## 90-Day MVP Goals
 
