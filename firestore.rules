@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    }
+
+    function publisherStaff(publisherId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/publisherStaff/$(publisherId + "_" + request.auth.uid));
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || hasRole("super_admin"));
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && (request.auth.uid == userId || hasRole("super_admin"));
+    }
+
+    match /publishers/{publisherId} {
+      allow read: if true;
+      allow write: if hasRole("super_admin") || publisherStaff(publisherId);
+    }
+
+    match /editions/{editionId} {
+      allow read: if resource.data.status == "published" || hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+      allow write: if hasRole("super_admin") || publisherStaff(request.resource.data.publisherId);
+    }
+
+    match /articlePosts/{articleId} {
+      allow read: if resource.data.status == "published" || hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+      allow write: if hasRole("super_admin") || publisherStaff(request.resource.data.publisherId);
+    }
+
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+    }
+
+    match /engagements/{engagementId} {
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
