@@ -49,3 +49,39 @@ Native mobile apps, advanced AI/OCR automation, full social automation, affiliat
    npm run lint
    npm run build
    ```
+
+## Firebase Setup
+
+1. Create a Firebase project and enable:
+   - Authentication: Google provider.
+   - Firestore Database: native mode.
+   - Storage.
+   - Hosting.
+
+2. Add the web app config values to `.env` using `.env.example`.
+
+3. Deploy the security rules:
+
+   ```bash
+   firebase deploy --only firestore:rules,storage
+   ```
+
+4. Seed starter content with a service account:
+
+   ```bash
+   # Option A: place serviceAccountKey.json in the project root.
+   # Option B: export GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
+   npm run seed:firestore
+   ```
+
+5. Bootstrap authorization by setting one or more seed env vars before running the seed:
+
+   ```bash
+   export PAPERLOOP_SEED_SUPER_ADMIN_UID=google-auth-uid
+   export PAPERLOOP_SEED_PUBLISHER_STAFF_UID=google-auth-uid
+   export PAPERLOOP_SEED_SUBSCRIBER_UID=google-auth-uid
+   export PAPERLOOP_SEED_PUBLISHER_ID=narmada-times
+   npm run seed:firestore
+   ```
+
+Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.

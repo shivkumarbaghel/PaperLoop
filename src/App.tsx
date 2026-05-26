@@ -39,6 +39,14 @@ import {
   subscribeToAuth,
 } from "./firebase";
 import {
+  canOpenAdminWorkspace,
+  canReadArticle,
+  canReadEdition,
+  canUseDiscussion,
+  canManagePublisher,
+  hasPublisherSubscription,
+} from "./services/authorization";
+import {
   getPaperLoopContent,
   mockContent,
   type PaperLoopContent,
@@ -48,6 +56,12 @@ import {
   recordEngagement,
   type EngagementType,
 } from "./services/engagementRepository";
+import {
+  emptyUserAccess,
+  getUserAccess,
+  subscribeToUserProfile,
+  type UserAccess,
+} from "./services/userRepository";
 import type {
   ArticlePost,
   Campaign,
@@ -55,6 +69,7 @@ import type {
   Edition,
   MetricCard,
   Publisher,
+  UserProfile,
 } from "./types";
 
 type View = "dashboard" | "reader" | "article" | "admin";
@@ -78,6 +93,11 @@ function App() {
   const [pageIndex, setPageIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userAccess, setUserAccess] = useState<UserAccess>(emptyUserAccess);
+  const [accessStatus, setAccessStatus] = useState<
+    "signed_out" | "loading" | "ready" | "error"
+  >("signed_out");
   const [authError, setAuthError] = useState("");
   const [content, setContent] = useState<PaperLoopContent>(mockContent);
   const [contentStatus, setContentStatus] = useState<"loading" | "ready" | "error">(
@@ -86,7 +106,49 @@ function App() {
 
   const { publishers, editions, articles, metrics, campaigns } = content;
 
-  useEffect(() => subscribeToAuth(setAuthUser), []);
+  useEffect(
+    () =>
+      subscribeToAuth((nextUser) => {
+        setAuthUser(nextUser);
+
+        if (!nextUser) {
+          setProfile(null);
+          setUserAccess(emptyUserAccess);
+          setAccessStatus("signed_out");
+        } else {
+          setAccessStatus("loading");
+        }
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    if (!authUser) {
+      return undefined;
+    }
+
+    const unsubscribe = subscribeToUserProfile(
+      authUser.uid,
+      (nextProfile) => {
+        setProfile(nextProfile);
+        setAccessStatus("ready");
+      },
+      () => {
+        setAccessStatus("error");
+        setAuthError("Unable to load your account permissions.");
+      },
+    );
+
+    getUserAccess(authUser.uid)
+      .then((nextAccess) => setUserAccess(nextAccess))
+      .catch(() => {
+        setUserAccess(emptyUserAccess);
+        setAccessStatus("error");
+        setAuthError("Unable to load your publisher or subscription access.");
+      });
+
+    return unsubscribe;
+  }, [authUser]);
 
   useEffect(() => {
     let active = true;
@@ -152,6 +214,20 @@ function App() {
     setPageIndex(0);
   }
 
+  function navigate(view: View) {
+    if (view === "admin" && !canOpenAdminWorkspace(profile, userAccess)) {
+      setAuthError(
+        authUser
+          ? "This Google account does not have publisher workspace access yet."
+          : "Please sign in with an authorized publisher Google account.",
+      );
+      return;
+    }
+
+    setAuthError("");
+    setActiveView(view);
+  }
+
   function openArticle(articleId: string) {
     setSelectedArticleId(articleId);
     setActiveView("article");
@@ -172,7 +248,10 @@ function App() {
       <Header
         activeView={activeView}
         authUser={authUser}
-        onNavigate={setActiveView}
+        profile={profile}
+        accessStatus={accessStatus}
+        canOpenAdmin={canOpenAdminWorkspace(profile, userAccess)}
+        onNavigate={navigate}
         onSignIn={handleGoogleLogin}
         onSignOut={signOutUser}
       />
@@ -214,6 +293,9 @@ function App() {
         {activeView === "reader" && (
           <ReaderView
             articles={articles}
+            authUser={authUser}
+            profile={profile}
+            userAccess={userAccess}
             publisher={selectedPublisher}
             edition={selectedEdition}
             pageIndex={pageIndex}
@@ -229,6 +311,8 @@ function App() {
             key={selectedArticle.id}
             article={selectedArticle}
             authUser={authUser}
+            profile={profile}
+            userAccess={userAccess}
             onBack={() => setActiveView("reader")}
             onAuthRequired={() =>
               setAuthError("Please sign in with Gmail to use subscriber actions.")
@@ -237,7 +321,12 @@ function App() {
         )}
 
         {activeView === "admin" && (
-          <AdminView campaigns={campaigns} metrics={metrics} />
+          <AdminView
+            campaigns={campaigns}
+            metrics={metrics}
+            profile={profile}
+            userAccess={userAccess}
+          />
         )}
       </main>
     </div>
@@ -247,6 +336,9 @@ function App() {
 interface HeaderProps {
   activeView: View;
   authUser: User | null;
+  profile: UserProfile | null;
+  accessStatus: "signed_out" | "loading" | "ready" | "error";
+  canOpenAdmin: boolean;
   onNavigate: (view: View) => void;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -255,6 +347,9 @@ interface HeaderProps {
 function Header({
   activeView,
   authUser,
+  profile,
+  accessStatus,
+  canOpenAdmin,
   onNavigate,
   onSignIn,
   onSignOut,
@@ -287,8 +382,13 @@ function Header({
         <button
           className={activeView === "admin" ? "active" : ""}
           onClick={() => onNavigate("admin")}
+          title={
+            canOpenAdmin
+              ? "Open publisher workspace"
+              : "Publisher staff authorization required"
+          }
         >
-          <BarChart3 size={18} />
+          {canOpenAdmin ? <BarChart3 size={18} /> : <Lock size={18} />}
           Admin
         </button>
       </nav>
@@ -299,6 +399,7 @@ function Header({
             <span className="user-chip">
               <UserRound size={16} />
               {authUser.displayName ?? authUser.email}
+              <small>{accessStatus === "loading" ? "loading" : profile?.role ?? "reader"}</small>
             </span>
             <button className="icon-button" onClick={onSignOut} aria-label="Sign out">
               <LogOut size={18} />
@@ -533,6 +634,9 @@ function PublisherSection({
 
 interface ReaderViewProps {
   articles: ArticlePost[];
+  authUser: User | null;
+  profile: UserProfile | null;
+  userAccess: UserAccess;
   publisher: Publisher;
   edition: Edition;
   pageIndex: number;
@@ -544,6 +648,9 @@ interface ReaderViewProps {
 
 function ReaderView({
   articles,
+  authUser,
+  profile,
+  userAccess,
   publisher,
   edition,
   pageIndex,
@@ -553,7 +660,10 @@ function ReaderView({
   onOpenArticle,
 }: ReaderViewProps) {
   const page = edition.pages[pageIndex] ?? edition.pages[0];
-  const pageArticles = articles.filter((article) => article.pageId === page.id);
+  const canReadSelectedEdition = canReadEdition(edition, profile, userAccess);
+  const pageArticles = articles.filter(
+    (article) => article.pageId === page.id && canReadArticle(article, profile, userAccess),
+  );
 
   return (
     <section className="reader-layout">
@@ -564,6 +674,15 @@ function ReaderView({
           <p>
             {publisher.city} edition • {edition.date}
           </p>
+          {authUser && (
+            <span className="access-chip">
+              {hasPublisherSubscription(userAccess, publisher.id)
+                ? "Subscriber access"
+                : canManagePublisher(profile, userAccess, publisher.id)
+                  ? "Publisher staff"
+                  : "Reader access"}
+            </span>
+          )}
         </div>
 
         <div className="edition-controls">
@@ -613,6 +732,16 @@ function ReaderView({
       </aside>
 
       <div className="reader-main">
+        {!canReadSelectedEdition && (
+          <section className="locked-panel" role="status">
+            <Lock size={22} />
+            <div>
+              <strong>Subscriber edition</strong>
+              <p>Sign in with an eligible subscription or publisher staff account to read this edition.</p>
+            </div>
+          </section>
+        )}
+
         <div className="viewer-toolbar">
           <div>
             <span className="eyebrow">Full-page e-paper</span>
@@ -688,19 +817,35 @@ function ReaderView({
 interface ArticleViewProps {
   article: ArticlePost;
   authUser: User | null;
+  profile: UserProfile | null;
+  userAccess: UserAccess;
   onBack: () => void;
   onAuthRequired: () => void;
 }
 
-function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewProps) {
+function ArticleView({
+  article,
+  authUser,
+  profile,
+  userAccess,
+  onBack,
+  onAuthRequired,
+}: ArticleViewProps) {
   const [comments, setComments] = useState<Comment[]>(() => article.comments);
   const [commentBody, setCommentBody] = useState("");
   const [feedback, setFeedback] = useState("");
   const [pendingAction, setPendingAction] = useState<EngagementType | "post" | "">("");
+  const canReadSelectedArticle = canReadArticle(article, profile, userAccess);
+  const canJoinDiscussion = canUseDiscussion(article, profile, userAccess);
 
   async function handleEngagement(type: EngagementType) {
     if (!authUser) {
       onAuthRequired();
+      return;
+    }
+
+    if (!canReadSelectedArticle) {
+      setFeedback("This action needs an active subscription or publisher staff access.");
       return;
     }
 
@@ -728,6 +873,11 @@ function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewP
   async function handleCommentSubmit() {
     if (!authUser) {
       onAuthRequired();
+      return;
+    }
+
+    if (!canJoinDiscussion) {
+      setFeedback("This discussion is limited to subscribers or publisher staff.");
       return;
     }
 
@@ -782,13 +932,31 @@ function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewP
               {pendingAction === "follow" ? "Following..." : "Follow"}
             </button>
           </div>
-          <p>{article.body}</p>
+          {canReadSelectedArticle ? (
+            <p>{article.body}</p>
+          ) : (
+            <div className="locked-panel compact" role="status">
+              <Lock size={20} />
+              <div>
+                <strong>Subscriber-only article</strong>
+                <p>
+                  Sign in with an active subscription or publisher staff account to read the full story.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="engagement-row">
-            <button onClick={() => handleEngagement("save")} disabled={pendingAction === "save"}>
+            <button
+              onClick={() => handleEngagement("save")}
+              disabled={pendingAction === "save" || !canReadSelectedArticle}
+            >
               <Bookmark size={18} />
               {article.stats.saves.toLocaleString()}
             </button>
-            <button onClick={() => handleEngagement("share")} disabled={pendingAction === "share"}>
+            <button
+              onClick={() => handleEngagement("share")}
+              disabled={pendingAction === "share" || !canReadSelectedArticle}
+            >
               <Share2 size={18} />
               {article.stats.shares.toLocaleString()}
             </button>
@@ -796,7 +964,10 @@ function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewP
               <MessageCircle size={18} />
               {article.stats.comments}
             </button>
-            <button onClick={() => handleEngagement("report")} disabled={pendingAction === "report"}>
+            <button
+              onClick={() => handleEngagement("report")}
+              disabled={pendingAction === "report" || !canReadSelectedArticle}
+            >
               <Flag size={18} />
               {pendingAction === "report" ? "Reporting..." : "Report"}
             </button>
@@ -834,12 +1005,21 @@ function ArticleView({ article, authUser, onBack, onAuthRequired }: ArticleViewP
               value={commentBody}
               onChange={(event) => setCommentBody(event.target.value)}
               placeholder="Add a subscriber comment"
+              disabled={!canJoinDiscussion}
             />
-            <button onClick={handleCommentSubmit} disabled={pendingAction === "post"}>
+            <button
+              onClick={handleCommentSubmit}
+              disabled={pendingAction === "post" || !canJoinDiscussion}
+            >
               <MessageCircle size={18} />
               {pendingAction === "post" ? "Posting..." : "Post"}
             </button>
           </div>
+          {!canJoinDiscussion && (
+            <p className="empty-state">
+              Subscriber or publisher staff access is required for this discussion.
+            </p>
+          )}
           <div className="comment-list">
             {comments.length === 0 ? (
               <p className="empty-state">No comments yet. Start the discussion.</p>
@@ -868,9 +1048,25 @@ function capitalize(value: string) {
 interface AdminViewProps {
   campaigns: Campaign[];
   metrics: MetricCard[];
+  profile: UserProfile | null;
+  userAccess: UserAccess;
 }
 
-function AdminView({ campaigns, metrics }: AdminViewProps) {
+function AdminView({ campaigns, metrics, profile, userAccess }: AdminViewProps) {
+  if (!canOpenAdminWorkspace(profile, userAccess)) {
+    return (
+      <section className="admin-layout">
+        <div className="locked-panel">
+          <Lock size={24} />
+          <div>
+            <strong>Publisher authorization required</strong>
+            <p>Use a Google account assigned as PaperLoop platform admin or publisher staff.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="admin-layout">
       <div className="admin-hero">

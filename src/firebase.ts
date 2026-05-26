@@ -11,9 +11,11 @@ import {
 } from "firebase/auth";
 import {
   doc,
+  getDoc,
   getFirestore,
   serverTimestamp,
   setDoc,
+  updateDoc,
   type Firestore,
 } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
@@ -86,20 +88,30 @@ export async function signInWithGoogle() {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   const credential = await signInWithPopup(firebase.auth, provider);
+  const userRef = doc(firebase.db, "users", credential.user.uid);
+  const userSnapshot = await getDoc(userRef);
 
-  await setDoc(
-    doc(firebase.db, "users", credential.user.uid),
-    {
+  if (userSnapshot.exists()) {
+    await updateDoc(userRef, {
+      name: credential.user.displayName,
+      email: credential.user.email,
+      avatarUrl: credential.user.photoURL,
+      provider: "google",
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(userRef, {
       id: credential.user.uid,
       name: credential.user.displayName,
       email: credential.user.email,
       avatarUrl: credential.user.photoURL,
       role: "reader",
       provider: "google",
+      status: "active",
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+    });
+  }
 
   return credential;
 }

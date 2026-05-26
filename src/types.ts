@@ -1,4 +1,5 @@
 export type UserRole =
+  | "platform_admin"
   | "super_admin"
   | "agency_admin"
   | "publisher_admin"
@@ -19,6 +20,10 @@ export type EditionStatus =
 export type AccessRule = "public" | "subscriber_only" | "staff_only";
 
 export type DiscussionRule = "disabled" | "logged_in" | "subscriber_only" | "locked";
+
+export type AccountStatus = "active" | "suspended" | "pending";
+
+export type SubscriptionStatus = "active" | "trialing" | "past_due" | "expired" | "canceled";
 
 export interface Publisher {
   id: string;
@@ -76,6 +81,7 @@ export interface ArticlePost {
   editionId: string;
   pageId: string;
   pageNumber: number;
+  status: EditionStatus;
   title: string;
   section: string;
   author: Columnist;
@@ -119,6 +125,7 @@ export interface MultimediaBlock {
 }
 
 export interface MetricCard {
+  id?: string;
   label: string;
   value: string;
   delta: string;
@@ -127,10 +134,41 @@ export interface MetricCard {
 
 export interface Campaign {
   id: string;
+  publisherId: string;
   name: string;
   type: "subscriber_acquisition" | "digital_ad" | "sponsored_content";
   target: string;
   spend: string;
   conversion: string;
   status: "active" | "scheduled" | "paused";
+}
+
+export interface UserProfile {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  role: UserRole;
+  provider: "google";
+  status: AccountStatus;
+  languagePreference?: string;
+}
+
+export interface ReaderSubscription {
+  id: string;
+  userId: string;
+  publisherId: string;
+  planType: "reader_free" | "reader_paid" | "institutional";
+  status: SubscriptionStatus;
+}
+
+export interface PublisherStaffMembership {
+  id: string;
+  userId: string;
+  publisherId: string;
+  role: Extract<
+    UserRole,
+    "agency_admin" | "publisher_admin" | "editor" | "columnist" | "moderator"
+  >;
+  status: AccountStatus;
 }

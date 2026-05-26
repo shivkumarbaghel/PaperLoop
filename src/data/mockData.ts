@@ -173,6 +173,7 @@ export const articles: ArticlePost[] = [
     editionId: "nt-2026-05-26",
     pageId: "nt-p1",
     pageNumber: 1,
+    status: "published",
     title: "डिजिटल बस पास सेवा से रोजाना यात्रियों को राहत",
     section: "शहर",
     author: columnists[0],
@@ -214,6 +215,7 @@ export const articles: ArticlePost[] = [
     editionId: "nt-2026-05-26",
     pageId: "nt-p1",
     pageNumber: 1,
+    status: "published",
     title: "मंडी में दाल और गेहूं के भाव स्थिर",
     section: "बिज़नेस",
     author: columnists[0],
@@ -240,6 +242,7 @@ export const articles: ArticlePost[] = [
     editionId: "nt-2026-05-26",
     pageId: "nt-p1",
     pageNumber: 1,
+    status: "published",
     title: "स्कूल सुरक्षा ऑडिट में 18 भवनों को सुधार नोटिस",
     section: "शिक्षा",
     author: columnists[1],
@@ -282,6 +285,7 @@ export const metrics: MetricCard[] = [
 export const campaigns: Campaign[] = [
   {
     id: "camp-students",
+    publisherId: "narmada-times",
     name: "Student premium pass",
     type: "subscriber_acquisition",
     target: "Hindi readers, 18-25, Jabalpur",
@@ -291,6 +295,7 @@ export const campaigns: Campaign[] = [
   },
   {
     id: "camp-market",
+    publisherId: "narmada-times",
     name: "Local mandi sponsor",
     type: "digital_ad",
     target: "Business section and market articles",
@@ -300,6 +305,7 @@ export const campaigns: Campaign[] = [
   },
   {
     id: "camp-edu",
+    publisherId: "narmada-times",
     name: "Education webinar promo",
     type: "sponsored_content",
     target: "Parents following education stories",

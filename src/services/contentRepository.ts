@@ -41,7 +41,7 @@ async function readFirestoreContent(): Promise<PaperLoopContent> {
   const [publishers, editions, articles, metrics, campaigns] = await Promise.all([
     readCollection<Publisher>("publishers"),
     readCollection<Edition>("editions", true),
-    readCollection<ArticlePost>("articlePosts", true),
+    readPublishedPublicArticles(),
     readCollection<MetricCard>("metrics"),
     readCollection<Campaign>("campaigns"),
   ]);
@@ -69,6 +69,30 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Pr
       .catch(() => resolve(fallback))
       .finally(() => window.clearTimeout(timeout));
   });
+}
+
+async function readPublishedPublicArticles() {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return [];
+  }
+
+  try {
+    const source = query(
+      collection(firebase.db, "articlePosts"),
+      where("status", "==", "published"),
+      where("accessRule", "==", "public"),
+    );
+    const snapshot = await getDocs(source);
+
+    return snapshot.docs.map((documentSnapshot) => ({
+      id: documentSnapshot.id,
+      ...documentSnapshot.data(),
+    })) as ArticlePost[];
+  } catch {
+    return [];
+  }
 }
 
 async function readCollection<T>(

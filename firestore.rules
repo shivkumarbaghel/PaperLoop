@@ -6,47 +6,177 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function hasRole(role) {
-      return signedIn()
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(userPath());
+    }
+
+    function userRole() {
+      return hasUserProfile() ? get(userPath()).data.role : "";
+    }
+
+    function isPlatformAdmin() {
+      return userRole() in ["platform_admin", "super_admin"];
+    }
+
+    function publisherStaffPath(publisherId) {
+      return /databases/$(database)/documents/publisherStaff/$(publisherId + "_" + request.auth.uid);
     }
 
     function publisherStaff(publisherId) {
       return signedIn()
-        && exists(/databases/$(database)/documents/publisherStaff/$(publisherId + "_" + request.auth.uid));
+        && exists(publisherStaffPath(publisherId))
+        && get(publisherStaffPath(publisherId)).data.status == "active";
+    }
+
+    function canManagePublisher(publisherId) {
+      return isPlatformAdmin() || publisherStaff(publisherId);
+    }
+
+    function subscriptionPath(publisherId) {
+      return /databases/$(database)/documents/subscriptions/$(request.auth.uid + "_" + publisherId);
+    }
+
+    function hasActiveSubscription(publisherId) {
+      return signedIn()
+        && exists(subscriptionPath(publisherId))
+        && get(subscriptionPath(publisherId)).data.status in ["active", "trialing"];
+    }
+
+    function canReadContent(data) {
+      return data.status == "published"
+        && (
+          data.accessRule == "public"
+          || (data.accessRule == "subscriber_only" && (hasActiveSubscription(data.publisherId) || canManagePublisher(data.publisherId)))
+        )
+        || canManagePublisher(data.publisherId);
+    }
+
+    function articlePath(articleId) {
+      return /databases/$(database)/documents/articlePosts/$(articleId);
+    }
+
+    function canDiscussArticle(articleId) {
+      return exists(articlePath(articleId))
+        && canReadContent(get(articlePath(articleId)).data)
+        && get(articlePath(articleId)).data.discussionRule in ["logged_in", "subscriber_only"]
+        && (
+          get(articlePath(articleId)).data.discussionRule == "logged_in"
+          || hasActiveSubscription(get(articlePath(articleId)).data.publisherId)
+          || canManagePublisher(get(articlePath(articleId)).data.publisherId)
+        );
+    }
+
+    function immutableUserKeys() {
+      return ["id", "role", "status", "createdAt"];
+    }
+
+    function safeUserCreate(userId) {
+      return request.resource.data.keys().hasOnly([
+        "id",
+        "name",
+        "email",
+        "avatarUrl",
+        "role",
+        "provider",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ])
+      && request.resource.data.id == userId
+      && request.resource.data.role == "reader"
+      && request.resource.data.provider == "google"
+      && request.resource.data.status == "active";
+    }
+
+    function safeUserUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        "name",
+        "email",
+        "avatarUrl",
+        "provider",
+        "languagePreference",
+        "updatedAt"
+      ])
+      && request.resource.data.provider == "google"
+      && request.resource.data.diff(resource.data).affectedKeys().hasNone(immutableUserKeys());
     }
 
     match /users/{userId} {
-      allow read: if signedIn() && (request.auth.uid == userId || hasRole("super_admin"));
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow update: if signedIn() && (request.auth.uid == userId || hasRole("super_admin"));
+      allow read: if signedIn() && (request.auth.uid == userId || isPlatformAdmin());
+      allow create: if signedIn() && request.auth.uid == userId && safeUserCreate(userId);
+      allow update: if signedIn()
+        && (
+          (request.auth.uid == userId && safeUserUpdate())
+          || isPlatformAdmin()
+        );
+      allow delete: if isPlatformAdmin();
     }
 
     match /publishers/{publisherId} {
       allow read: if true;
-      allow write: if hasRole("super_admin") || publisherStaff(publisherId);
+      allow write: if canManagePublisher(publisherId);
     }
 
     match /editions/{editionId} {
-      allow read: if resource.data.status == "published" || hasRole("super_admin") || publisherStaff(resource.data.publisherId);
-      allow write: if hasRole("super_admin") || publisherStaff(request.resource.data.publisherId);
+      allow read: if canReadContent(resource.data);
+      allow write: if canManagePublisher(request.resource.data.publisherId);
     }
 
     match /articlePosts/{articleId} {
-      allow read: if resource.data.status == "published" || hasRole("super_admin") || publisherStaff(resource.data.publisherId);
-      allow write: if hasRole("super_admin") || publisherStaff(request.resource.data.publisherId);
+      allow read: if canReadContent(resource.data);
+      allow write: if canManagePublisher(request.resource.data.publisherId);
     }
 
     match /comments/{commentId} {
-      allow read: if true;
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+      allow read: if exists(articlePath(resource.data.articlePostId))
+        && canReadContent(get(articlePath(resource.data.articlePostId)).data);
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == "published"
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 2000
+        && canDiscussArticle(request.resource.data.articlePostId);
+      allow update, delete: if canManagePublisher(resource.data.publisherId);
     }
 
     match /engagements/{engagementId} {
-      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow read: if hasRole("super_admin") || publisherStaff(resource.data.publisherId);
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.type in ["save", "share", "report", "follow", "comment"]
+        && request.resource.data.status == "active"
+        && exists(articlePath(request.resource.data.articlePostId))
+        && canReadContent(get(articlePath(request.resource.data.articlePostId)).data);
+      allow read: if canManagePublisher(resource.data.publisherId);
+      allow update, delete: if false;
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.userId || canManagePublisher(resource.data.publisherId));
+      allow write: if isPlatformAdmin() || canManagePublisher(request.resource.data.publisherId);
+    }
+
+    match /publisherStaff/{membershipId} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.userId || canManagePublisher(resource.data.publisherId));
+      allow write: if isPlatformAdmin();
+    }
+
+    match /metrics/{metricId} {
+      allow read, write: if isPlatformAdmin();
+    }
+
+    match /campaigns/{campaignId} {
+      allow read: if canManagePublisher(resource.data.publisherId);
+      allow create: if canManagePublisher(request.resource.data.publisherId);
+      allow update: if canManagePublisher(resource.data.publisherId)
+        && canManagePublisher(request.resource.data.publisherId);
+      allow delete: if canManagePublisher(resource.data.publisherId);
     }
 
     match /{document=**} {

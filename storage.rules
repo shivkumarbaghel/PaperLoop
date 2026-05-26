@@ -6,14 +6,47 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function userPath() {
+      return /databases/(default)/documents/users/$(request.auth.uid);
+    }
+
+    function userRole() {
+      return signedIn() && firestore.exists(userPath())
+        ? firestore.get(userPath()).data.role
+        : "";
+    }
+
+    function isPlatformAdmin() {
+      return userRole() in ["platform_admin", "super_admin"];
+    }
+
+    function staffPath(publisherId) {
+      return /databases/(default)/documents/publisherStaff/$(publisherId + "_" + request.auth.uid);
+    }
+
+    function publisherStaff(publisherId) {
+      return signedIn()
+        && firestore.exists(staffPath(publisherId))
+        && firestore.get(staffPath(publisherId)).data.status == "active";
+    }
+
+    function canManagePublisher(publisherId) {
+      return isPlatformAdmin() || publisherStaff(publisherId);
+    }
+
+    function safeAsset() {
+      return request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType.matches("(image/.*|video/.*|application/pdf)");
+    }
+
     match /publishers/{publisherId}/{allPaths=**} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if canManagePublisher(publisherId) && safeAsset();
     }
 
     match /users/{userId}/{allPaths=**} {
       allow read: if true;
-      allow write: if signedIn() && request.auth.uid == userId;
+      allow write: if signedIn() && request.auth.uid == userId && safeAsset();
     }
   }
 }
