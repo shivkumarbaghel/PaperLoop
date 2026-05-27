@@ -2,6 +2,8 @@ import type { User } from "firebase/auth";
 import {
   collection,
   doc,
+  deleteField,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -13,8 +15,14 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
 import type {
   AccessRule,
+  AdvertiserCampaign,
+  ArticleBlock,
+  ArticleBlockStatus,
+  ArticleBlockType,
   ArticleHotspot,
   ArticlePost,
+  Campaign,
+  Comment,
   DiscussionRule,
   Edition,
   EditionStatus,
@@ -42,6 +50,11 @@ export interface EditionDraftInput {
 
 export interface ArticleBlockInput {
   pageId: string;
+  blockId?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
   title: string;
   section: string;
   summary: string;
@@ -50,6 +63,47 @@ export interface ArticleBlockInput {
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
   hotspotLabel: string;
+}
+
+export interface ArticleBlockDraftInput {
+  blockId?: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  pageNumber: number;
+  type: ArticleBlockType;
+  status: ArticleBlockStatus;
+  source: "ai" | "manual";
+  label: string;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence?: number;
+}
+
+export interface CampaignInput {
+  publisherId: string;
+  name: string;
+  advertiserName: string;
+  type: Campaign["type"];
+  target: string;
+  placementTarget: AdvertiserCampaign["placementTarget"];
+  placementRef: string;
+  budget: string;
+  status: Campaign["status"];
+}
+
+export interface PublisherCommentActivity extends Comment {
+  articlePostId: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  status: string;
 }
 
 export async function createEditionDraft(
@@ -93,7 +147,7 @@ export async function createEditionDraft(
     city: input.city.trim(),
     language: input.language.trim(),
     sections: input.sections,
-    status: "review",
+    status: "processing",
     accessRule: input.accessRule,
     pages: [],
     sourceAssetPath,
@@ -106,11 +160,181 @@ export async function createEditionDraft(
 
   await setDoc(editionRef, {
     ...edition,
+    processingQueuedAt: serverTimestamp(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 
   return edition;
+}
+
+export async function getPublisherArticleBlocks(
+  publisherIds: string[],
+): Promise<ArticleBlock[]> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase || publisherIds.length === 0) {
+    return [];
+  }
+
+  const snapshots = await Promise.all(
+    chunk(publisherIds, 10).map((publisherIdChunk) =>
+      getDocs(
+        query(
+          collection(firebase.db, "articleBlocks"),
+          where("publisherId", "in", publisherIdChunk),
+        ),
+      ),
+    ),
+  );
+
+  return snapshots
+    .flatMap((snapshot) =>
+      snapshot.docs.map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      })) as ArticleBlock[],
+    )
+    .sort((a, b) => a.pageNumber - b.pageNumber || a.y - b.y);
+}
+
+export async function getPublisherComments(
+  publisherIds: string[],
+): Promise<PublisherCommentActivity[]> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase || publisherIds.length === 0) {
+    return [];
+  }
+
+  const snapshots = await Promise.all(
+    chunk(publisherIds, 10).map((publisherIdChunk) =>
+      getDocs(
+        query(
+          collection(firebase.db, "comments"),
+          where("publisherId", "in", publisherIdChunk),
+        ),
+      ),
+    ),
+  );
+
+  return snapshots.flatMap((snapshot) =>
+    snapshot.docs.map((documentSnapshot) => ({
+      id: documentSnapshot.id,
+      ...documentSnapshot.data(),
+    })) as PublisherCommentActivity[],
+  );
+}
+
+export async function saveArticleBlockDraft(
+  input: ArticleBlockDraftInput,
+  user: User,
+): Promise<ArticleBlock> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  validateBlockInput(input);
+
+  const blockRef = input.blockId
+    ? doc(firebase.db, "articleBlocks", input.blockId)
+    : doc(collection(firebase.db, "articleBlocks"));
+  const block: ArticleBlock = {
+    id: blockRef.id,
+    publisherId: input.publisherId,
+    editionId: input.editionId,
+    pageId: input.pageId,
+    pageNumber: input.pageNumber,
+    type: input.type,
+    status: input.status,
+    source: input.source,
+    label: input.label.trim(),
+    title: input.title.trim(),
+    section: input.section.trim(),
+    summary: input.summary.trim(),
+    body: input.body.trim(),
+    x: clampPercent(input.x),
+    y: clampPercent(input.y),
+    width: clampPercent(input.width),
+    height: clampPercent(input.height),
+    confidence: input.confidence ?? (input.source === "manual" ? 1 : 0.65),
+    createdBy: user.uid,
+  };
+
+  await setDoc(
+    blockRef,
+    {
+      ...block,
+      updatedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return block;
+}
+
+export async function updateArticleBlockStatus(
+  block: ArticleBlock,
+  status: ArticleBlockStatus,
+): Promise<ArticleBlock> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  await updateDoc(doc(firebase.db, "articleBlocks", block.id), {
+    status,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...block,
+    status,
+  };
+}
+
+export async function createAdvertiserCampaign(
+  input: CampaignInput,
+  user: User,
+): Promise<AdvertiserCampaign> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!input.publisherId || !input.name.trim() || !input.advertiserName.trim()) {
+    throw new Error("Publisher, campaign name, and advertiser name are required.");
+  }
+
+  const campaignRef = doc(collection(firebase.db, "campaigns"));
+  const campaign: AdvertiserCampaign = {
+    id: campaignRef.id,
+    publisherId: input.publisherId,
+    name: input.name.trim(),
+    advertiserName: input.advertiserName.trim(),
+    type: input.type,
+    target: input.target.trim(),
+    placementTarget: input.placementTarget,
+    placementRef: input.placementRef.trim() || input.publisherId,
+    spend: input.budget.trim() || "Rs 0",
+    budget: input.budget.trim() || "Rs 0",
+    conversion: "0%",
+    status: input.status,
+  };
+
+  await setDoc(campaignRef, {
+    ...campaign,
+    createdBy: user.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return campaign;
 }
 
 export async function getPublisherWorkspaceEditions(
@@ -181,6 +405,37 @@ export async function updateEditionWorkflowStatus(
   };
 }
 
+export async function requestSmartEditionProcessing(
+  edition: Edition,
+  user: User,
+): Promise<Edition> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.sourceAssetPath) {
+    throw new Error("Upload a PDF or page image before smart processing.");
+  }
+
+  await updateDoc(doc(firebase.db, "editions", edition.id), {
+    pages: [],
+    status: "processing",
+    processingError: deleteField(),
+    processingQueuedAt: serverTimestamp(),
+    processingQueuedBy: user.uid,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...edition,
+    pages: [],
+    status: "processing",
+    processingError: undefined,
+  };
+}
+
 export async function generateEditionPreviewPages(
   edition: Edition,
   user: User,
@@ -231,15 +486,16 @@ export async function createArticleBlockFromPreviewPage(
 
   validateArticleBlockInput(input);
 
+  const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
   const articleId = `${edition.id}-${slugify(input.title)}`;
   const hotspot: ArticleHotspot = {
     id: `${articleId}-hotspot`,
     articleId,
     label: input.hotspotLabel.trim(),
-    x: page.hotspots.length % 2 === 0 ? 8 : 55,
-    y: 18 + page.hotspots.length * 10,
-    width: page.hotspots.length % 2 === 0 ? 44 : 36,
-    height: 22,
+    x: sourceBlock?.x ?? input.x ?? (page.hotspots.length % 2 === 0 ? 8 : 55),
+    y: sourceBlock?.y ?? input.y ?? 18 + page.hotspots.length * 10,
+    width: sourceBlock?.width ?? input.width ?? (page.hotspots.length % 2 === 0 ? 44 : 36),
+    height: sourceBlock?.height ?? input.height ?? 22,
   };
   const nextPages = edition.pages.map((editionPage) =>
     editionPage.id === page.id
@@ -298,6 +554,13 @@ export async function createArticleBlockFromPreviewPage(
       pages: nextPages,
       updatedAt: serverTimestamp(),
     }),
+    input.blockId
+      ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), {
+          articlePostId: articleId,
+          status: "published",
+          updatedAt: serverTimestamp(),
+        })
+      : Promise.resolve(),
   ]);
 
   return {
@@ -307,6 +570,36 @@ export async function createArticleBlockFromPreviewPage(
       pages: nextPages,
     },
   };
+}
+
+async function getArticleBlock(blockId: string) {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return null;
+  }
+
+  const snapshot = await getDoc(doc(firebase.db, "articleBlocks", blockId));
+
+  return snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as ArticleBlock) : null;
+}
+
+function validateBlockInput(input: ArticleBlockDraftInput) {
+  if (!input.publisherId || !input.editionId || !input.pageId || !input.label.trim()) {
+    throw new Error("Publisher, edition, page, and block label are required.");
+  }
+
+  if (input.width <= 0 || input.height <= 0) {
+    throw new Error("Block width and height must be greater than zero.");
+  }
+}
+
+function clampPercent(value: number) {
+  if (Number.isNaN(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
 }
 
 function validateDraftInput(input: EditionDraftInput) {

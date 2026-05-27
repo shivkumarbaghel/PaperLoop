@@ -6,6 +6,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { getFirebaseServices } from "../firebase";
@@ -116,6 +117,27 @@ export async function getPublisherStaffInvites(
       ...documentSnapshot.data(),
     })) as PublisherStaffInvite[],
   );
+}
+
+export async function updatePublisherStaffStatus(
+  membership: PublisherStaffMembership,
+  status: PublisherStaffMembership["status"],
+): Promise<PublisherStaffMembership> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  await updateDoc(doc(firebase.db, "publisherStaff", membership.id), {
+    status,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...membership,
+    status,
+  };
 }
 
 function slugify(value: string) {

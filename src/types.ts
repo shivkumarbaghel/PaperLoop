@@ -64,6 +64,8 @@ export interface Edition {
   sourceAssetName?: string;
   sourceAssetSize?: number;
   createdBy?: string;
+  processingJobId?: string;
+  processingError?: string;
 }
 
 export interface Page {
@@ -74,6 +76,11 @@ export interface Page {
   headline: string;
   subhead: string;
   hotspots: ArticleHotspot[];
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  width?: number;
+  height?: number;
+  processingStatus?: "pending" | "ready" | "failed";
 }
 
 export interface ArticleHotspot {
@@ -152,6 +159,74 @@ export interface Campaign {
   spend: string;
   conversion: string;
   status: "active" | "scheduled" | "paused";
+  advertiserName?: string;
+  placementTarget?: "publisher" | "edition" | "page" | "section" | "article";
+  placementRef?: string;
+  budget?: string;
+}
+
+export type ArticleBlockType = "article" | "advertisement" | "photo" | "notice" | "other";
+
+export type ArticleBlockStatus =
+  | "suggested"
+  | "accepted"
+  | "draft"
+  | "published"
+  | "rejected";
+
+export interface PageAsset {
+  id: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  pageNumber: number;
+  imageUrl: string;
+  thumbnailUrl: string;
+  storagePath: string;
+  thumbnailPath: string;
+  width: number;
+  height: number;
+  status: "processing" | "ready" | "failed";
+}
+
+export interface ArticleBlock {
+  id: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  pageNumber: number;
+  type: ArticleBlockType;
+  status: ArticleBlockStatus;
+  source: "ai" | "manual";
+  label: string;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  articlePostId?: string;
+  createdBy?: string;
+}
+
+export interface ProcessingJob {
+  id: string;
+  publisherId: string;
+  editionId: string;
+  sourceAssetPath: string;
+  status: "queued" | "processing" | "review" | "failed";
+  pageCount: number;
+  error?: string;
+}
+
+export interface AdvertiserCampaign extends Campaign {
+  advertiserName: string;
+  placementTarget: "publisher" | "edition" | "page" | "section" | "article";
+  placementRef: string;
+  budget: string;
 }
 
 export interface UserProfile {

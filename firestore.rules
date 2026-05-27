@@ -126,6 +126,30 @@ service cloud.firestore {
       allow write: if canManagePublisher(request.resource.data.publisherId);
     }
 
+    match /articleBlocks/{blockId} {
+      allow read: if signedIn() && canManagePublisher(resource.data.publisherId);
+      allow create: if signedIn()
+        && request.resource.data.publisherId is string
+        && canManagePublisher(request.resource.data.publisherId)
+        && request.resource.data.type in ["article", "advertisement", "photo", "notice", "other"]
+        && request.resource.data.status in ["suggested", "accepted", "draft", "published", "rejected"];
+      allow update: if signedIn()
+        && canManagePublisher(resource.data.publisherId)
+        && request.resource.data.publisherId == resource.data.publisherId
+        && request.resource.data.status in ["suggested", "accepted", "draft", "published", "rejected"];
+      allow delete: if signedIn() && canManagePublisher(resource.data.publisherId);
+    }
+
+    match /pageAssets/{pageAssetId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /processingJobs/{jobId} {
+      allow read: if signedIn() && canManagePublisher(resource.data.publisherId);
+      allow write: if false;
+    }
+
     match /comments/{commentId} {
       allow read: if exists(articlePath(resource.data.articlePostId))
         && canReadContent(get(articlePath(resource.data.articlePostId)).data);

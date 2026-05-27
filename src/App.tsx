@@ -4,6 +4,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import type { User } from "firebase/auth";
@@ -70,13 +71,22 @@ import {
   createPublisherStaffInvite,
   getPublisherStaffDirectory,
   getPublisherStaffInvites,
+  updatePublisherStaffStatus,
 } from "./services/accessManagementRepository";
 import {
+  createAdvertiserCampaign,
   createArticleBlockFromPreviewPage,
   createEditionDraft,
   generateEditionPreviewPages,
+  getPublisherArticleBlocks,
+  getPublisherComments,
   getPublisherWorkspaceEditions,
+  requestSmartEditionProcessing,
+  saveArticleBlockDraft,
+  updateArticleBlockStatus,
   updateEditionWorkflowStatus,
+  type CampaignInput,
+  type PublisherCommentActivity,
 } from "./services/publisherWorkspaceRepository";
 import {
   emptyUserAccess,
@@ -86,6 +96,9 @@ import {
 } from "./services/userRepository";
 import type {
   ArticlePost,
+  ArticleBlock,
+  ArticleBlockStatus,
+  ArticleBlockType,
   AccessRule,
   Campaign,
   Comment,
@@ -107,6 +120,13 @@ const staffRoles: PublisherStaffMembership["role"][] = [
   "editor",
   "moderator",
   "columnist",
+];
+const blockTypes: ArticleBlockType[] = [
+  "article",
+  "advertisement",
+  "photo",
+  "notice",
+  "other",
 ];
 
 function App() {
@@ -140,7 +160,7 @@ function App() {
     "loading",
   );
 
-  const { publishers, editions, articles, metrics, campaigns } = content;
+  const { publishers, editions, articles, campaigns } = content;
 
   useEffect(
     () =>
@@ -427,9 +447,9 @@ function App() {
 
         {activeView === "admin" && (
           <AdminView
+            articles={articles}
             campaigns={campaigns}
             editions={editions}
-            metrics={metrics}
             profile={profile}
             publishers={publishers}
             authUser={authUser}
@@ -1390,21 +1410,83 @@ function upsertEdition(editions: Edition[], nextEdition: Edition) {
   );
 }
 
+function upsertBlock(blocks: ArticleBlock[], nextBlock: ArticleBlock) {
+  const existingBlockIndex = blocks.findIndex((block) => block.id === nextBlock.id);
+
+  if (existingBlockIndex === -1) {
+    return [nextBlock, ...blocks];
+  }
+
+  return blocks.map((block) => (block.id === nextBlock.id ? nextBlock : block));
+}
+
+function buildPublisherStats(
+  publishers: Publisher[],
+  editions: Edition[],
+  articles: ArticlePost[],
+  blocks: ArticleBlock[],
+  comments: PublisherCommentActivity[],
+): MetricCard[] {
+  const totalViews = articles.reduce((sum, article) => sum + article.stats.views, 0);
+  const totalShares = articles.reduce((sum, article) => sum + article.stats.shares, 0);
+  const totalLikes = articles.reduce((sum, article) => sum + article.stats.saves, 0);
+  const totalFollowers = articles.reduce(
+    (sum, article) => sum + article.author.followers,
+    publishers.reduce((publisherSum, publisher) => publisherSum + publisher.subscriberCount, 0),
+  );
+  const readyEditions = editions.filter((edition) =>
+    ["review", "published"].includes(edition.status),
+  ).length;
+
+  return [
+    {
+      label: "Reach",
+      value: compactNumber(totalViews + totalShares),
+      delta: `${blocks.length} blocks`,
+      tone: "good",
+    },
+    {
+      label: "Followers",
+      value: compactNumber(totalFollowers),
+      delta: `${publishers.length} publisher${publishers.length === 1 ? "" : "s"}`,
+      tone: "neutral",
+    },
+    {
+      label: "Likes",
+      value: compactNumber(totalLikes),
+      delta: `${totalShares.toLocaleString()} shares`,
+      tone: "good",
+    },
+    {
+      label: "Viewers",
+      value: compactNumber(totalViews),
+      delta: `${comments.length} comments`,
+      tone: comments.length > 20 ? "warn" : "neutral",
+    },
+    {
+      label: "Editions",
+      value: String(readyEditions),
+      delta: `${editions.length} total`,
+      tone: "neutral",
+    },
+  ];
+}
+
 interface AdminViewProps {
+  articles: ArticlePost[];
   authUser: User | null;
   campaigns: Campaign[];
   editions: Edition[];
-  metrics: MetricCard[];
   profile: UserProfile | null;
   publishers: Publisher[];
   userAccess: UserAccess;
 }
 
 function AdminView({
+  articles,
   authUser,
   campaigns,
   editions,
-  metrics,
   profile,
   publishers,
   userAccess,
@@ -1442,6 +1524,9 @@ function AdminView({
   const [workspaceStatus, setWorkspaceStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
+  const [workspaceBlocks, setWorkspaceBlocks] = useState<ArticleBlock[]>([]);
+  const [workspaceComments, setWorkspaceComments] = useState<PublisherCommentActivity[]>([]);
+  const [createdCampaigns, setCreatedCampaigns] = useState<Campaign[]>([]);
   const [staffDirectory, setStaffDirectory] = useState<PublisherStaffMembership[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PublisherStaffInvite[]>([]);
   const [accessStatus, setAccessStatus] = useState<"loading" | "ready" | "error">(
@@ -1471,6 +1556,7 @@ function AdminView({
     "success",
   );
   const [workflowMessage, setWorkflowMessage] = useState("");
+  const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0);
   const [previewEditionId, setPreviewEditionId] = useState("");
   const [articlePageId, setArticlePageId] = useState("");
   const [articleTitle, setArticleTitle] = useState("");
@@ -1486,6 +1572,31 @@ function AdminView({
     "idle" | "saving" | "success" | "error"
   >("idle");
   const [articleCreateMessage, setArticleCreateMessage] = useState("");
+  const [selectedBlockId, setSelectedBlockId] = useState("");
+  const [blockType, setBlockType] = useState<ArticleBlockType>("article");
+  const [blockStatus, setBlockStatus] = useState<ArticleBlockStatus>("draft");
+  const [blockLabel, setBlockLabel] = useState("Manual block");
+  const [blockX, setBlockX] = useState(8);
+  const [blockY, setBlockY] = useState(16);
+  const [blockWidth, setBlockWidth] = useState(34);
+  const [blockHeight, setBlockHeight] = useState(18);
+  const [hideClips, setHideClips] = useState(false);
+  const [clipZoom, setClipZoom] = useState(1);
+  const [blockSaveStatus, setBlockSaveStatus] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [blockMessage, setBlockMessage] = useState("");
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignAdvertiser, setCampaignAdvertiser] = useState("");
+  const [campaignTarget, setCampaignTarget] = useState("");
+  const [campaignPlacementTarget, setCampaignPlacementTarget] =
+    useState<CampaignInput["placementTarget"]>("publisher");
+  const [campaignBudget, setCampaignBudget] = useState("Rs 25K");
+  const [campaignStatus, setCampaignStatus] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [campaignMessage, setCampaignMessage] = useState("");
+  const [staffActionMessage, setStaffActionMessage] = useState("");
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
@@ -1508,17 +1619,57 @@ function AdminView({
     previewEdition?.pages.find((page) => page.id === articlePageId) ??
     previewEdition?.pages[0] ??
     null;
+  const selectedPageBlocks = useMemo(
+    () =>
+      selectedArticlePage
+        ? workspaceBlocks.filter((block) => block.pageId === selectedArticlePage.id)
+        : [],
+    [selectedArticlePage, workspaceBlocks],
+  );
+  const selectedBlock =
+    (selectedBlockId
+      ? workspaceBlocks.find((block) => block.id === selectedBlockId)
+      : null) ?? null;
+  const publisherArticles = articles.filter((article) =>
+    workspacePublisherIds.includes(article.publisherId),
+  );
+  const workspaceCampaigns = useMemo(
+    () => [
+      ...createdCampaigns,
+      ...campaigns.filter(
+        (campaign) =>
+          !createdCampaigns.some((createdCampaign) => createdCampaign.id === campaign.id),
+      ),
+    ],
+    [campaigns, createdCampaigns],
+  );
+  const activePublisherCampaigns = workspaceCampaigns.filter((campaign) =>
+    workspacePublisherIds.includes(campaign.publisherId),
+  );
+  const dashboardStats = buildPublisherStats(
+    accessiblePublishers,
+    workspaceEditions,
+    publisherArticles,
+    workspaceBlocks,
+    workspaceComments,
+  );
 
   useEffect(() => {
     let active = true;
 
-    getPublisherWorkspaceEditions(workspacePublisherIds)
-      .then((nextEditions) => {
+    Promise.all([
+      getPublisherWorkspaceEditions(workspacePublisherIds),
+      getPublisherArticleBlocks(workspacePublisherIds),
+      getPublisherComments(workspacePublisherIds),
+    ])
+      .then(([nextEditions, nextBlocks, nextComments]) => {
         if (!active) {
           return;
         }
 
         setWorkspaceEditions(nextEditions);
+        setWorkspaceBlocks(nextBlocks);
+        setWorkspaceComments(nextComments);
         setWorkspaceStatus("ready");
       })
       .catch(() => {
@@ -1527,13 +1678,15 @@ function AdminView({
         }
 
         setWorkspaceEditions([]);
+        setWorkspaceBlocks([]);
+        setWorkspaceComments([]);
         setWorkspaceStatus("error");
       });
 
     return () => {
       active = false;
     };
-  }, [workspacePublisherIds]);
+  }, [workspacePublisherIds, workspaceRefreshKey]);
 
   useEffect(() => {
     let active = true;
@@ -1597,9 +1750,12 @@ function AdminView({
       );
 
       setCreatedDrafts((currentDrafts) => [nextDraft, ...currentDrafts]);
+      setPreviewEditionId(nextDraft.id);
+      setArticlePageId("");
       setSourceFile(null);
       setUploadStatus("success");
-      setUploadMessage("Edition draft uploaded for staff review.");
+      setUploadMessage("Edition uploaded. Smart processing will create pages and suggested blocks.");
+      setWorkspaceRefreshKey((currentKey) => currentKey + 1);
     } catch (error) {
       setUploadStatus("error");
       setUploadMessage(
@@ -1753,6 +1909,222 @@ function AdminView({
     }
   }
 
+  async function handleRequestSmartProcessing(edition: Edition) {
+    if (!authUser) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("Sign in before starting smart processing.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, edition.publisherId)) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("This account cannot manage that publisher.");
+      return;
+    }
+
+    setWorkflowEditionId(edition.id);
+    setWorkflowStatus("success");
+    setWorkflowMessage("");
+
+    try {
+      const processingEdition = await requestSmartEditionProcessing(edition, authUser);
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, processingEdition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === processingEdition.id ? processingEdition : draft,
+        ),
+      );
+      setPreviewEditionId(processingEdition.id);
+      setArticlePageId("");
+      setWorkflowStatus("success");
+      setWorkflowMessage(
+        "Smart processing queued. Use Refresh workspace after a few seconds to load page images and AI blocks.",
+      );
+    } catch (error) {
+      setWorkflowStatus("error");
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Unable to queue smart processing.",
+      );
+    } finally {
+      setWorkflowEditionId("");
+    }
+  }
+
+  function handleClipSurfaceClick(event: MouseEvent<HTMLDivElement>) {
+    if (
+      !previewEdition ||
+      !selectedArticlePage ||
+      (event.target as HTMLElement).closest(".clip-block")
+    ) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 100;
+    const y = ((event.clientY - rect.top) / rect.height) * 100;
+
+    setSelectedBlockId("");
+    setBlockType("article");
+    setBlockStatus("draft");
+    setBlockLabel("Manual block");
+    setArticleTitle("");
+    setArticleSummary("");
+    setArticleBody("");
+    setArticleHotspotLabel("Manual block");
+    setBlockX(Math.min(84, Math.max(0, Math.round(x * 10) / 10)));
+    setBlockY(Math.min(84, Math.max(0, Math.round(y * 10) / 10)));
+    setBlockWidth(28);
+    setBlockHeight(16);
+    setBlockMessage("Manual block started. Adjust details, then save draft.");
+  }
+
+  function handleSelectBlock(block: ArticleBlock) {
+    setSelectedBlockId(block.id);
+    setBlockType(block.type);
+    setBlockStatus(block.status === "suggested" ? "accepted" : block.status);
+    setBlockLabel(block.label);
+    setArticleTitle(block.title);
+    setArticleSection(block.section);
+    setArticleSummary(block.summary);
+    setArticleBody(block.body);
+    setArticleHotspotLabel(block.label);
+    setBlockX(block.x);
+    setBlockY(block.y);
+    setBlockWidth(block.width);
+    setBlockHeight(block.height);
+    setBlockMessage("");
+  }
+
+  async function handleSaveBlockDraft() {
+    if (!authUser || !previewEdition || !selectedArticlePage) {
+      setBlockSaveStatus("error");
+      setBlockMessage("Choose a processed page before saving a block.");
+      return;
+    }
+
+    setBlockSaveStatus("saving");
+    setBlockMessage("");
+
+    try {
+      const nextBlock = await saveArticleBlockDraft(
+        {
+          blockId: selectedBlockId || undefined,
+          publisherId: previewEdition.publisherId,
+          editionId: previewEdition.id,
+          pageId: selectedArticlePage.id,
+          pageNumber: selectedArticlePage.pageNumber,
+          type: blockType,
+          status: blockStatus,
+          source: selectedBlock?.source ?? "manual",
+          label: blockLabel,
+          title: articleTitle || blockLabel,
+          section: articleSection,
+          summary: articleSummary || "Publisher draft block. Review before publishing.",
+          body: articleBody || "Publisher will add cleaned article text here.",
+          x: blockX,
+          y: blockY,
+          width: blockWidth,
+          height: blockHeight,
+          confidence: selectedBlock?.confidence,
+        },
+        authUser,
+      );
+
+      setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, nextBlock));
+      setSelectedBlockId(nextBlock.id);
+      setBlockSaveStatus("success");
+      setBlockMessage("Block draft saved.");
+    } catch (error) {
+      setBlockSaveStatus("error");
+      setBlockMessage(error instanceof Error ? error.message : "Unable to save block.");
+    }
+  }
+
+  async function handleBlockDecision(block: ArticleBlock, status: ArticleBlockStatus) {
+    setBlockSaveStatus("saving");
+    setBlockMessage("");
+
+    try {
+      const nextBlock = await updateArticleBlockStatus(block, status);
+
+      setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, nextBlock));
+      setBlockSaveStatus("success");
+      setBlockMessage(`Block ${formatRole(status)}.`);
+    } catch (error) {
+      setBlockSaveStatus("error");
+      setBlockMessage(
+        error instanceof Error ? error.message : "Unable to update block.",
+      );
+    }
+  }
+
+  async function handleCampaignSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser || !selectedDraftPublisherId) {
+      setCampaignStatus("error");
+      setCampaignMessage("Sign in and choose a publisher before creating a campaign.");
+      return;
+    }
+
+    setCampaignStatus("saving");
+    setCampaignMessage("");
+
+    try {
+      const nextCampaign = await createAdvertiserCampaign(
+        {
+          publisherId: selectedDraftPublisherId,
+          name: campaignName,
+          advertiserName: campaignAdvertiser,
+          type: "digital_ad",
+          target: campaignTarget,
+          placementTarget: campaignPlacementTarget,
+          placementRef: selectedArticlePage?.id ?? selectedDraftPublisherId,
+          budget: campaignBudget,
+          status: "active",
+        },
+        authUser,
+      );
+
+      setCreatedCampaigns((currentCampaigns) => [nextCampaign, ...currentCampaigns]);
+      setCampaignName("");
+      setCampaignAdvertiser("");
+      setCampaignTarget("");
+      setCampaignStatus("success");
+      setCampaignMessage("Advertiser campaign created.");
+    } catch (error) {
+      setCampaignStatus("error");
+      setCampaignMessage(
+        error instanceof Error ? error.message : "Unable to create campaign.",
+      );
+    }
+  }
+
+  async function handleStaffStatusChange(
+    member: PublisherStaffMembership,
+    status: PublisherStaffMembership["status"],
+  ) {
+    setStaffActionMessage("");
+
+    try {
+      const nextMember = await updatePublisherStaffStatus(member, status);
+
+      setStaffDirectory((currentMembers) =>
+        currentMembers.map((currentMember) =>
+          currentMember.id === nextMember.id ? nextMember : currentMember,
+        ),
+      );
+      setStaffActionMessage(`${formatRole(member.role)} ${formatRole(status)}.`);
+    } catch (error) {
+      setStaffActionMessage(
+        error instanceof Error ? error.message : "Unable to update staff status.",
+      );
+    }
+  }
+
   async function handleArticleBlockSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1776,6 +2148,11 @@ function AdminView({
         previewEdition,
         {
           pageId: selectedArticlePage.id,
+          blockId: selectedBlock?.id,
+          x: blockX,
+          y: blockY,
+          width: blockWidth,
+          height: blockHeight,
           title: articleTitle,
           section: articleSection,
           summary: articleSummary,
@@ -1800,6 +2177,15 @@ function AdminView({
       setArticleSummary("");
       setArticleBody("");
       setArticleHotspotLabel("Open story");
+      if (selectedBlock) {
+        setWorkspaceBlocks((currentBlocks) =>
+          upsertBlock(currentBlocks, {
+            ...selectedBlock,
+            articlePostId: result.article.id,
+            status: "published",
+          }),
+        );
+      }
       setArticleCreateStatus("success");
       setArticleCreateMessage("Article block created and linked to the preview page.");
     } catch (error) {
@@ -1824,12 +2210,219 @@ function AdminView({
     );
   }
 
+  if (canManagePlatform(profile)) {
+    return (
+      <section className="admin-layout">
+        <div className="admin-hero">
+          <div>
+            <span className="eyebrow">Super admin console</span>
+            <h1>Manage publisher roles and access for PaperLoop test agencies.</h1>
+          </div>
+          <a href="#role-assignment" className="admin-action">
+            <Users size={18} />
+            Assign staff role
+          </a>
+        </div>
+
+        <div className="metric-grid">
+          <article className="metric-card good">
+            <span>Publishers</span>
+            <strong>{publishers.length}</strong>
+            <small>seeded agencies</small>
+          </article>
+          <article className="metric-card neutral">
+            <span>Active staff</span>
+            <strong>
+              {staffDirectory.filter((member) => member.status === "active").length}
+            </strong>
+            <small>role records</small>
+          </article>
+          <article className="metric-card warn">
+            <span>Suspended</span>
+            <strong>
+              {staffDirectory.filter((member) => member.status === "suspended").length}
+            </strong>
+            <small>restricted users</small>
+          </article>
+          <article className="metric-card neutral">
+            <span>Pending invites</span>
+            <strong>{pendingInvites.length}</strong>
+            <small>awaiting grant script</small>
+          </article>
+        </div>
+
+        <div className="admin-grid">
+          <section className="workspace-panel" id="role-assignment">
+            <div className="section-heading compact">
+              <span className="eyebrow">Role assignment</span>
+              <h2>Record publisher staff access</h2>
+            </div>
+            <form className="edition-form" onSubmit={handleInviteSubmit}>
+              <div className="form-grid">
+                <label>
+                  <span>Publisher</span>
+                  <select
+                    value={selectedInvitePublisherId}
+                    onChange={(event) => setInvitePublisherId(event.target.value)}
+                  >
+                    {publishers.map((publisher) => (
+                      <option key={publisher.id} value={publisher.id}>
+                        {publisher.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select
+                    value={inviteRole}
+                    onChange={(event) =>
+                      setInviteRole(
+                        event.target.value as PublisherStaffMembership["role"],
+                      )
+                    }
+                  >
+                    {staffRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {formatRole(role)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Staff name</span>
+                  <input
+                    value={inviteName}
+                    onChange={(event) => setInviteName(event.target.value)}
+                    placeholder="Publisher staff name"
+                  />
+                </label>
+                <label>
+                  <span>Staff email</span>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="staff@example.com"
+                  />
+                </label>
+              </div>
+              <button disabled={inviteStatus === "saving"}>
+                <Users size={18} />
+                {inviteStatus === "saving" ? "Saving role..." : "Record role invite"}
+              </button>
+              {inviteMessage && (
+                <p className={`action-feedback ${inviteStatus}`}>{inviteMessage}</p>
+              )}
+            </form>
+          </section>
+
+          <section className="workspace-panel strategy-panel">
+            <div className="section-heading compact">
+              <span className="eyebrow">Publisher directory</span>
+              <h2>Existing test publishers</h2>
+            </div>
+            <div className="publisher-admin-grid">
+              {publishers.map((publisher) => {
+                const publisherStaff = staffDirectory.filter(
+                  (member) => member.publisherId === publisher.id,
+                );
+
+                return (
+                  <article className="publisher-admin-card" key={publisher.id}>
+                    <div className="publisher-logo">{publisher.logo}</div>
+                    <div>
+                      <strong>{publisher.name}</strong>
+                      <span>
+                        {publisher.city}, {publisher.region} • {publisherStaff.length} staff
+                      </span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="workspace-panel strategy-panel">
+            <div className="section-heading compact">
+              <span className="eyebrow">Role directory</span>
+              <h2>View, suspend, or restore access</h2>
+            </div>
+            {staffActionMessage && (
+              <p className="action-feedback success">{staffActionMessage}</p>
+            )}
+            <div className="access-directory">
+              <div>
+                <h3>Active staff</h3>
+                {accessStatus === "error" && (
+                  <p className="empty-state">Unable to load staff access records.</p>
+                )}
+                {staffDirectory.length === 0 && accessStatus !== "error" ? (
+                  <p className="empty-state">No staff records yet.</p>
+                ) : (
+                  staffDirectory.map((member) => (
+                    <article className="staff-card" key={member.id}>
+                      <div>
+                        <strong>{formatRole(member.role)}</strong>
+                        <span>
+                          {publisherName(publishers, member.publisherId)} • {member.userId}
+                        </span>
+                      </div>
+                      <div className="staff-actions">
+                        <small>{member.status}</small>
+                        {member.status === "active" ? (
+                          <button
+                            type="button"
+                            onClick={() => handleStaffStatusChange(member, "suspended")}
+                          >
+                            Suspend
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleStaffStatusChange(member, "active")}
+                          >
+                            Restore
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+              <div>
+                <h3>Pending invites</h3>
+                {pendingInvites.length === 0 ? (
+                  <p className="empty-state">No pending agency invites.</p>
+                ) : (
+                  pendingInvites.map((invite) => (
+                    <article className="staff-card invite-card" key={invite.id}>
+                      <div>
+                        <strong>{invite.name}</strong>
+                        <span>
+                          {invite.email} • {formatRole(invite.role)} •{" "}
+                          {publisherName(publishers, invite.publisherId)}
+                        </span>
+                        <code>{grantAccessCommand(invite)}</code>
+                      </div>
+                      <small>{invite.status}</small>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="admin-layout">
       <div className="admin-hero">
         <div>
-          <span className="eyebrow">Super admin + publisher workspace</span>
-          <h1>Manage agencies, editions, subscriptions, ads, and content strategy.</h1>
+          <span className="eyebrow">Publisher dashboard</span>
+          <h1>Upload, clip, publish, track reach, and manage advertiser campaigns.</h1>
         </div>
         <a href="#edition-upload" className="admin-action">
           <FileUp size={18} />
@@ -1838,7 +2431,7 @@ function AdminView({
       </div>
 
       <div className="metric-grid">
-        {metrics.map((metric) => (
+        {dashboardStats.map((metric) => (
           <article className={`metric-card ${metric.tone}`} key={metric.label}>
             <span>{metric.label}</span>
             <strong>{metric.value}</strong>
@@ -2087,21 +2680,85 @@ function AdminView({
         <section className="workspace-panel">
           <div className="section-heading compact">
             <span className="eyebrow">Targeted campaigns</span>
-            <h2>Ads and subscriber growth</h2>
+            <h2>Advertiser placements</h2>
           </div>
+          <form className="edition-form compact-form" onSubmit={handleCampaignSubmit}>
+            <div className="form-grid">
+              <label>
+                <span>Campaign</span>
+                <input
+                  value={campaignName}
+                  onChange={(event) => setCampaignName(event.target.value)}
+                  placeholder="Front page sponsor"
+                />
+              </label>
+              <label>
+                <span>Advertiser</span>
+                <input
+                  value={campaignAdvertiser}
+                  onChange={(event) => setCampaignAdvertiser(event.target.value)}
+                  placeholder="Local advertiser"
+                />
+              </label>
+              <label>
+                <span>Placement</span>
+                <select
+                  value={campaignPlacementTarget}
+                  onChange={(event) =>
+                    setCampaignPlacementTarget(
+                      event.target.value as CampaignInput["placementTarget"],
+                    )
+                  }
+                >
+                  <option value="publisher">Publisher</option>
+                  <option value="edition">Edition</option>
+                  <option value="page">Page</option>
+                  <option value="section">Section</option>
+                  <option value="article">Article</option>
+                </select>
+              </label>
+              <label>
+                <span>Budget</span>
+                <input
+                  value={campaignBudget}
+                  onChange={(event) => setCampaignBudget(event.target.value)}
+                />
+              </label>
+            </div>
+            <label>
+              <span>Targeting</span>
+              <input
+                value={campaignTarget}
+                onChange={(event) => setCampaignTarget(event.target.value)}
+                placeholder="Hindi readers, Delhi NCR, education articles"
+              />
+            </label>
+            <button disabled={campaignStatus === "saving"}>
+              <CircleDollarSign size={18} />
+              {campaignStatus === "saving" ? "Creating..." : "Create campaign"}
+            </button>
+            {campaignMessage && (
+              <p className={`action-feedback ${campaignStatus}`}>{campaignMessage}</p>
+            )}
+          </form>
           <div className="campaign-list">
-            {campaigns.map((campaign) => (
+            {activePublisherCampaigns.map((campaign) => (
               <article className="campaign-card" key={campaign.id}>
                 <div>
                   <strong>{campaign.name}</strong>
-                  <span>{campaign.target}</span>
+                  <span>
+                    {campaign.advertiserName ?? "Advertiser"} • {campaign.target}
+                  </span>
                 </div>
                 <div>
-                  <span>{campaign.spend}</span>
+                  <span>{campaign.budget ?? campaign.spend}</span>
                   <strong>{campaign.conversion}</strong>
                 </div>
               </article>
             ))}
+            {activePublisherCampaigns.length === 0 && (
+              <p className="empty-state">No advertiser campaigns for this publisher yet.</p>
+            )}
           </div>
         </section>
 
@@ -2119,8 +2776,63 @@ function AdminView({
 
         <section className="workspace-panel strategy-panel">
           <div className="section-heading compact">
+            <span className="eyebrow">Article performance</span>
+            <h2>Blocks, comments, likes, shares, and views</h2>
+          </div>
+          <div className="article-admin-table">
+            {publisherArticles.slice(0, 8).map((article) => (
+              <article key={article.id}>
+                <div>
+                  <strong>{article.title}</strong>
+                  <span>
+                    {article.section} • Page {article.pageNumber} •{" "}
+                    {formatRole(article.status)}
+                  </span>
+                </div>
+                <small>
+                  {article.stats.views.toLocaleString()} views •{" "}
+                  {article.stats.saves.toLocaleString()} likes/saves •{" "}
+                  {article.stats.shares.toLocaleString()} shares •{" "}
+                  {article.stats.comments} comments
+                </small>
+              </article>
+            ))}
+            {publisherArticles.length === 0 && (
+              <p className="empty-state">Published article blocks will appear here.</p>
+            )}
+          </div>
+          <div className="comment-moderation-list">
+            <h3>Latest comments and reports</h3>
+            {workspaceComments.slice(0, 5).map((comment) => (
+              <article className="comment-card" key={comment.id}>
+                <div>
+                  <strong>{comment.userName}</strong>
+                  <span>{comment.status}</span>
+                </div>
+                <p>{comment.body}</p>
+              </article>
+            ))}
+            {workspaceComments.length === 0 && (
+              <p className="empty-state">No article comments for this publisher yet.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="workspace-panel strategy-panel">
+          <div className="section-heading compact">
             <span className="eyebrow">Edition review</span>
             <h2>Review and publish queue</h2>
+          </div>
+          <div className="workspace-toolbar">
+            <button
+              type="button"
+              onClick={() => setWorkspaceRefreshKey((currentKey) => currentKey + 1)}
+            >
+              Refresh workspace
+            </button>
+            <span>
+              Smart processing creates page images, thumbnails, and AI suggested clips.
+            </span>
           </div>
           <div className="draft-list">
             {workspaceStatus === "error" && (
@@ -2134,6 +2846,10 @@ function AdminView({
               );
               const isUpdating = workflowEditionId === edition.id;
               const hasPreviewPages = edition.pages.length > 0;
+              const hasSmartPages = edition.pages.some((page) => page.imageUrl);
+              const needsSmartProcessing = Boolean(edition.sourceAssetPath) && !hasSmartPages;
+              const canPublishEdition =
+                hasPreviewPages && (!edition.sourceAssetPath || hasSmartPages);
 
               return (
                 <article className="draft-card" key={edition.id}>
@@ -2145,8 +2861,11 @@ function AdminView({
                     <small>
                       {edition.sourceAssetName ?? "Metadata only"} •{" "}
                       {hasPreviewPages
-                        ? `${edition.pages.length} preview page${edition.pages.length === 1 ? "" : "s"}`
-                        : "Preview pending"}
+                        ? `${edition.pages.length} page${edition.pages.length === 1 ? "" : "s"}${hasSmartPages ? " with image" : " placeholder"}`
+                        : edition.status === "processing"
+                          ? "Smart processing running"
+                          : "Smart processing pending"}
+                      {edition.processingError ? ` • ${edition.processingError}` : ""}
                     </small>
                   </div>
                   <div className="draft-actions">
@@ -2155,7 +2874,7 @@ function AdminView({
                         Source
                       </a>
                     )}
-                    {hasPreviewPages ? (
+                    {hasSmartPages || (!edition.sourceAssetPath && hasPreviewPages) ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -2166,13 +2885,26 @@ function AdminView({
                       >
                         Preview
                       </button>
+                    ) : needsSmartProcessing ? (
+                      <button
+                        type="button"
+                        disabled={!canManageEdition || isUpdating || edition.status === "processing"}
+                        onClick={() => handleRequestSmartProcessing(edition)}
+                        title="Queue Firebase Functions processing for the uploaded asset"
+                      >
+                        {edition.status === "processing"
+                          ? "Processing..."
+                          : isUpdating
+                            ? "Queueing..."
+                            : "Run smart processing"}
+                      </button>
                     ) : (
                       <button
                         type="button"
                         disabled={!canManageEdition || isUpdating}
                         onClick={() => handleGeneratePreviewPages(edition)}
                       >
-                        {isUpdating ? "Generating..." : "Generate preview"}
+                        {isUpdating ? "Generating..." : "Generate demo preview"}
                       </button>
                     )}
                     {edition.status === "published" ? (
@@ -2186,12 +2918,12 @@ function AdminView({
                     ) : (
                       <button
                         type="button"
-                        disabled={!canManageEdition || isUpdating || !hasPreviewPages}
+                        disabled={!canManageEdition || isUpdating || !canPublishEdition}
                         onClick={() => handleEditionStatusChange(edition, "published")}
                         title={
-                          hasPreviewPages
+                          canPublishEdition
                             ? "Publish edition"
-                            : "Generate a preview before publishing"
+                            : "Wait for smart page images before publishing"
                         }
                       >
                         {isUpdating ? "Publishing..." : "Publish"}
@@ -2228,10 +2960,121 @@ function AdminView({
                   </article>
                 ))}
               </div>
+              {selectedArticlePage && (
+                <div className="clip-editor">
+                  <aside className="clip-rail">
+                    <div className="clip-tabs">
+                      <strong>Pages</strong>
+                      <span>Page clips</span>
+                    </div>
+                    {previewEdition.pages.map((page) => (
+                      <button
+                        type="button"
+                        className={page.id === selectedArticlePage.id ? "active" : ""}
+                        key={page.id}
+                        onClick={() => {
+                          setArticlePageId(page.id);
+                          setArticleSection(page.section);
+                        }}
+                      >
+                        {page.thumbnailUrl ? (
+                          <img src={page.thumbnailUrl} alt={`Page ${page.pageNumber}`} />
+                        ) : (
+                          <Newspaper size={24} />
+                        )}
+                        <span>Page {page.pageNumber}</span>
+                      </button>
+                    ))}
+                    <div className="clip-list">
+                      {selectedPageBlocks.map((block) => (
+                        <button
+                          type="button"
+                          className={block.id === selectedBlock?.id ? "active" : ""}
+                          key={block.id}
+                          onClick={() => handleSelectBlock(block)}
+                        >
+                          <strong>{block.label}</strong>
+                          <span>
+                            {formatRole(block.type)} • {formatRole(block.status)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </aside>
+                  <div className="clip-stage-wrap">
+                    <div className="clip-toolbar">
+                      <button type="button" onClick={() => setHideClips(!hideClips)}>
+                        {hideClips ? "Show clips" : "Hide clips"}
+                      </button>
+                      <button type="button" onClick={() => setClipZoom(Math.max(0.7, clipZoom - 0.1))}>
+                        <ZoomOut size={16} />
+                      </button>
+                      <span>{Math.round(clipZoom * 100)}%</span>
+                      <button type="button" onClick={() => setClipZoom(Math.min(1.4, clipZoom + 0.1))}>
+                        <ZoomIn size={16} />
+                      </button>
+                      <button type="button" onClick={() => setClipZoom(1)}>
+                        Fit
+                      </button>
+                    </div>
+                    <div
+                      className="clip-stage"
+                      style={{ transform: `scale(${clipZoom})` }}
+                      onClick={handleClipSurfaceClick}
+                    >
+                      {selectedArticlePage.imageUrl ? (
+                        <img
+                          src={selectedArticlePage.imageUrl}
+                          alt={`Page ${selectedArticlePage.pageNumber}`}
+                        />
+                      ) : (
+                        <div className="clip-placeholder-page">
+                          <strong>{selectedArticlePage.headline}</strong>
+                          <p>{selectedArticlePage.subhead}</p>
+                        </div>
+                      )}
+                      {!hideClips &&
+                        selectedPageBlocks.map((block) => (
+                          <button
+                            type="button"
+                            className={`clip-block ${block.id === selectedBlock?.id ? "active" : ""}`}
+                            key={block.id}
+                            style={{
+                              left: `${block.x}%`,
+                              top: `${block.y}%`,
+                              width: `${block.width}%`,
+                              height: `${block.height}%`,
+                            }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleSelectBlock(block);
+                            }}
+                          >
+                            <span>{block.label}</span>
+                          </button>
+                        ))}
+                      {!hideClips && !selectedBlockId && (
+                        <button
+                          type="button"
+                          className="clip-block draft"
+                          style={{
+                            left: `${blockX}%`,
+                            top: `${blockY}%`,
+                            width: `${blockWidth}%`,
+                            height: `${blockHeight}%`,
+                          }}
+                        >
+                          <span>{blockLabel}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <form className="article-block-form" onSubmit={handleArticleBlockSubmit}>
                 <div className="section-heading compact">
                   <span className="eyebrow">Manual clipping</span>
-                  <h3>Create readable article block</h3>
+                  <h3>Review AI block or draw your own</h3>
                 </div>
                 <div className="form-grid">
                   <label>
@@ -2258,6 +3101,32 @@ function AdminView({
                     </select>
                   </label>
                   <label>
+                    <span>Block type</span>
+                    <select
+                      value={blockType}
+                      onChange={(event) => setBlockType(event.target.value as ArticleBlockType)}
+                    >
+                      {blockTypes.map((type) => (
+                        <option key={type} value={type}>
+                          {formatRole(type)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Block status</span>
+                    <select
+                      value={blockStatus}
+                      onChange={(event) =>
+                        setBlockStatus(event.target.value as ArticleBlockStatus)
+                      }
+                    >
+                      <option value="accepted">Accepted</option>
+                      <option value="draft">Draft</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </label>
+                  <label>
                     <span>Section</span>
                     <input
                       value={articleSection}
@@ -2275,8 +3144,11 @@ function AdminView({
                   <label>
                     <span>Hotspot label</span>
                     <input
-                      value={articleHotspotLabel}
-                      onChange={(event) => setArticleHotspotLabel(event.target.value)}
+                      value={blockLabel}
+                      onChange={(event) => {
+                        setBlockLabel(event.target.value);
+                        setArticleHotspotLabel(event.target.value);
+                      }}
                       placeholder="Open story"
                     />
                   </label>
@@ -2300,6 +3172,48 @@ function AdminView({
                       <option value="subscriber_only">Subscriber only</option>
                       <option value="staff_only">Staff only</option>
                     </select>
+                  </label>
+                </div>
+                <div className="form-grid geometry-grid">
+                  <label>
+                    <span>X%</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={blockX}
+                      onChange={(event) => setBlockX(Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    <span>Y%</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={blockY}
+                      onChange={(event) => setBlockY(Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    <span>Width%</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={blockWidth}
+                      onChange={(event) => setBlockWidth(Number(event.target.value))}
+                    />
+                  </label>
+                  <label>
+                    <span>Height%</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={blockHeight}
+                      onChange={(event) => setBlockHeight(Number(event.target.value))}
+                    />
                   </label>
                 </div>
                 <label>
@@ -2339,6 +3253,32 @@ function AdminView({
                     ? "Creating article..."
                     : "Create article block"}
                 </button>
+                <button
+                  type="button"
+                  disabled={blockSaveStatus === "saving"}
+                  onClick={handleSaveBlockDraft}
+                >
+                  <CheckCircle2 size={18} />
+                  {blockSaveStatus === "saving" ? "Saving block..." : "Save block draft"}
+                </button>
+                {selectedBlock && selectedBlock.status !== "published" && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleBlockDecision(
+                        selectedBlock,
+                        selectedBlock.status === "rejected" ? "accepted" : "rejected",
+                      )
+                    }
+                  >
+                    {selectedBlock.status === "rejected" ? "Accept block" : "Reject block"}
+                  </button>
+                )}
+                {blockMessage && (
+                  <p className={`action-feedback ${blockSaveStatus}`}>
+                    {blockMessage}
+                  </p>
+                )}
                 {articleCreateMessage && (
                   <p className={`action-feedback ${articleCreateStatus}`}>
                     {articleCreateMessage}

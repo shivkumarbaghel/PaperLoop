@@ -68,6 +68,8 @@ Verified on 2026-05-27:
 - Firebase Authentication is initialized with Google and Email/Password sign-in enabled.
 - The testing admin account uses the login ID `admin` and is bootstrapped as a `super_admin` with Storage upload claims.
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
+- The workspace is split by role: super admins manage staff roles, while publisher staff manage uploads, clipping, analytics, comments, and advertiser campaigns.
+- Firebase Functions can process uploaded edition assets into page images, thumbnails, and AI-suggested article/ad blocks using the OpenAI API.
 - Publisher staff can move edition records between review and published states from the Admin workspace.
 - Publisher staff can generate lightweight edition preview pages from uploaded edition metadata before publishing.
 - Reader can switch between published editions for a publisher, open the uploaded source PDF/image, and read metadata-generated preview editions.
@@ -110,7 +112,18 @@ Verified on 2026-05-27:
    firebase deploy --only firestore:rules,storage --project paperloop-2e121
    ```
 
-7. Bootstrap authorization by setting one or more seed env vars before running the seed:
+7. Configure and deploy the smart edition processor:
+
+   ```bash
+   firebase functions:secrets:set OPENAI_API_KEY --project paperloop-2e121
+   npm --prefix functions install
+   npm run functions:build
+   firebase deploy --only functions,firestore:rules,storage --project paperloop-2e121
+   ```
+
+   Optional: set `OPENAI_BLOCK_MODEL` on the Functions runtime to override the default block-detection model.
+
+8. Bootstrap authorization by setting one or more seed env vars before running the seed:
 
    ```bash
    export PAPERLOOP_SEED_SUPER_ADMIN_UID=google-auth-uid
@@ -121,6 +134,8 @@ Verified on 2026-05-27:
    ```
 
 Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Storage upload authorization uses Firebase Auth custom claims seeded by `npm run seed:firestore` when the matching Auth user already exists. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
+
+Edition uploads now start in `processing`. The Functions backend renders image/PDF uploads into page assets, writes `pageAssets`, creates AI-suggested `articleBlocks`, then moves the edition to `review`. Publisher staff can accept/reject suggestions, draw manual rectangles, publish article posts, and attach basic advertiser campaigns from the Publisher Dashboard.
 
 ### Test Admin And Publisher Accounts
 

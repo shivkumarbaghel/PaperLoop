@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
+    "functions:build": "npm --prefix functions run build",
     "grant:access": "tsx scripts/grantPublisherAccess.ts",
     "seed:firestore": "tsx scripts/seedFirestore.ts",
     "seed:test-access": "tsx scripts/seedTestAccess.ts"
