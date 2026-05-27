@@ -11,7 +11,15 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
-import type { AccessRule, Edition, EditionStatus, Page } from "../types";
+import type {
+  AccessRule,
+  ArticleHotspot,
+  ArticlePost,
+  DiscussionRule,
+  Edition,
+  EditionStatus,
+  Page,
+} from "../types";
 
 const maxUploadBytes = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -30,6 +38,18 @@ export interface EditionDraftInput {
   sections: string[];
   accessRule: AccessRule;
   sourceFile: File;
+}
+
+export interface ArticleBlockInput {
+  pageId: string;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  authorName: string;
+  accessRule: AccessRule;
+  discussionRule: DiscussionRule;
+  hotspotLabel: string;
 }
 
 export async function createEditionDraft(
@@ -192,6 +212,103 @@ export async function generateEditionPreviewPages(
   };
 }
 
+export async function createArticleBlockFromPreviewPage(
+  edition: Edition,
+  input: ArticleBlockInput,
+  user: User,
+): Promise<{ article: ArticlePost; edition: Edition }> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  const page = edition.pages.find((editionPage) => editionPage.id === input.pageId);
+
+  if (!page) {
+    throw new Error("Choose a generated preview page for this article.");
+  }
+
+  validateArticleBlockInput(input);
+
+  const articleId = `${edition.id}-${slugify(input.title)}`;
+  const hotspot: ArticleHotspot = {
+    id: `${articleId}-hotspot`,
+    articleId,
+    label: input.hotspotLabel.trim(),
+    x: page.hotspots.length % 2 === 0 ? 8 : 55,
+    y: 18 + page.hotspots.length * 10,
+    width: page.hotspots.length % 2 === 0 ? 44 : 36,
+    height: 22,
+  };
+  const nextPages = edition.pages.map((editionPage) =>
+    editionPage.id === page.id
+      ? {
+          ...editionPage,
+          hotspots: [
+            ...editionPage.hotspots.filter(
+              (existingHotspot) => existingHotspot.articleId !== articleId,
+            ),
+            hotspot,
+          ],
+        }
+      : editionPage,
+  );
+  const article: ArticlePost = {
+    id: articleId,
+    publisherId: edition.publisherId,
+    editionId: edition.id,
+    pageId: page.id,
+    pageNumber: page.pageNumber,
+    status: "published",
+    title: input.title.trim(),
+    section: input.section.trim(),
+    author: {
+      id: slugify(input.authorName),
+      name: input.authorName.trim(),
+      publication: edition.title,
+      topics: [input.section.trim()],
+      bio: "Publisher staff article created from a PaperLoop preview page.",
+      verified: true,
+      followers: 0,
+    },
+    summary: input.summary.trim(),
+    body: input.body.trim(),
+    clippedImageTone: slugify(input.section) || "local",
+    accessRule: input.accessRule,
+    discussionRule: input.discussionRule,
+    stats: {
+      views: 0,
+      saves: 0,
+      shares: 0,
+      comments: 0,
+    },
+    comments: [],
+    multimedia: [],
+  };
+
+  await Promise.all([
+    setDoc(doc(firebase.db, "articlePosts", articleId), {
+      ...article,
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }),
+    updateDoc(doc(firebase.db, "editions", edition.id), {
+      pages: nextPages,
+      updatedAt: serverTimestamp(),
+    }),
+  ]);
+
+  return {
+    article,
+    edition: {
+      ...edition,
+      pages: nextPages,
+    },
+  };
+}
+
 function validateDraftInput(input: EditionDraftInput) {
   if (!input.publisherId || !input.title.trim() || !input.date || !input.city.trim()) {
     throw new Error("Publisher, title, date, and city are required.");
@@ -207,6 +324,20 @@ function validateDraftInput(input: EditionDraftInput) {
 
   if (input.sourceFile.size > maxUploadBytes) {
     throw new Error("Issue asset must be 25 MB or smaller.");
+  }
+}
+
+function validateArticleBlockInput(input: ArticleBlockInput) {
+  if (
+    !input.pageId ||
+    !input.title.trim() ||
+    !input.section.trim() ||
+    !input.summary.trim() ||
+    !input.body.trim() ||
+    !input.authorName.trim() ||
+    !input.hotspotLabel.trim()
+  ) {
+    throw new Error("Page, title, section, summary, body, author, and hotspot label are required.");
   }
 }
 

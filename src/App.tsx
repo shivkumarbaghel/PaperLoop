@@ -72,6 +72,7 @@ import {
   getPublisherStaffInvites,
 } from "./services/accessManagementRepository";
 import {
+  createArticleBlockFromPreviewPage,
   createEditionDraft,
   generateEditionPreviewPages,
   getPublisherWorkspaceEditions,
@@ -88,9 +89,11 @@ import type {
   AccessRule,
   Campaign,
   Comment,
+  DiscussionRule,
   Edition,
   EditionStatus,
   MetricCard,
+  Page,
   Publisher,
   PublisherStaffInvite,
   PublisherStaffMembership,
@@ -1433,6 +1436,20 @@ function AdminView({
   );
   const [workflowMessage, setWorkflowMessage] = useState("");
   const [previewEditionId, setPreviewEditionId] = useState("");
+  const [articlePageId, setArticlePageId] = useState("");
+  const [articleTitle, setArticleTitle] = useState("");
+  const [articleSection, setArticleSection] = useState("शहर");
+  const [articleSummary, setArticleSummary] = useState("");
+  const [articleBody, setArticleBody] = useState("");
+  const [articleAuthorName, setArticleAuthorName] = useState("Publisher Desk");
+  const [articleHotspotLabel, setArticleHotspotLabel] = useState("Open story");
+  const [articleAccessRule, setArticleAccessRule] = useState<AccessRule>("public");
+  const [articleDiscussionRule, setArticleDiscussionRule] =
+    useState<DiscussionRule>("logged_in");
+  const [articleCreateStatus, setArticleCreateStatus] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [articleCreateMessage, setArticleCreateMessage] = useState("");
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
@@ -1451,6 +1468,22 @@ function AdminView({
     () => reviewQueue.find((edition) => edition.id === previewEditionId) ?? null,
     [previewEditionId, reviewQueue],
   );
+  const selectedArticlePage =
+    previewEdition?.pages.find((page) => page.id === articlePageId) ??
+    previewEdition?.pages[0] ??
+    null;
+
+  useEffect(() => {
+    if (!previewEdition?.pages.length) {
+      setArticlePageId("");
+      return;
+    }
+
+    if (!previewEdition.pages.some((page) => page.id === articlePageId)) {
+      setArticlePageId(previewEdition.pages[0].id);
+      setArticleSection(previewEdition.pages[0].section);
+    }
+  }, [articlePageId, previewEdition]);
 
   useEffect(() => {
     let active = true;
@@ -1691,6 +1724,63 @@ function AdminView({
       );
     } finally {
       setWorkflowEditionId("");
+    }
+  }
+
+  async function handleArticleBlockSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser || !previewEdition || !selectedArticlePage) {
+      setArticleCreateStatus("error");
+      setArticleCreateMessage("Choose a preview edition and page before creating an article.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, previewEdition.publisherId)) {
+      setArticleCreateStatus("error");
+      setArticleCreateMessage("This account cannot create articles for that publisher.");
+      return;
+    }
+
+    setArticleCreateStatus("saving");
+    setArticleCreateMessage("");
+
+    try {
+      const result = await createArticleBlockFromPreviewPage(
+        previewEdition,
+        {
+          pageId: selectedArticlePage.id,
+          title: articleTitle,
+          section: articleSection,
+          summary: articleSummary,
+          body: articleBody,
+          authorName: articleAuthorName,
+          accessRule: articleAccessRule,
+          discussionRule: articleDiscussionRule,
+          hotspotLabel: articleHotspotLabel,
+        },
+        authUser,
+      );
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, result.edition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === result.edition.id ? result.edition : draft,
+        ),
+      );
+      setArticleTitle("");
+      setArticleSummary("");
+      setArticleBody("");
+      setArticleHotspotLabel("Open story");
+      setArticleCreateStatus("success");
+      setArticleCreateMessage("Article block created and linked to the preview page.");
+    } catch (error) {
+      setArticleCreateStatus("error");
+      setArticleCreateMessage(
+        error instanceof Error ? error.message : "Unable to create article block.",
+      );
     }
   }
 
