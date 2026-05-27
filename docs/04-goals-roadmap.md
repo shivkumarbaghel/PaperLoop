@@ -26,6 +26,7 @@ Firebase bootstrap is complete enough to validate Phase 1 upload flows.
 - The Nepro admin account is bootstrapped as a super admin for role-based testing.
 - Super admin can now record publisher staff invites from the Admin workspace; a service-account script grants the matching Firebase Auth custom claims.
 - Edition records can now move from review to published, or back to review, inside the Admin workspace.
+- Uploaded edition drafts can generate lightweight staff preview pages from metadata before publishing; OCR/page extraction remains later work.
 
 The next active product milestone remains Phase 1: Publisher And Edition Foundation.
 

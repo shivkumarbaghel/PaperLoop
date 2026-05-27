@@ -73,6 +73,7 @@ import {
 } from "./services/accessManagementRepository";
 import {
   createEditionDraft,
+  generateEditionPreviewPages,
   getPublisherWorkspaceEditions,
   updateEditionWorkflowStatus,
 } from "./services/publisherWorkspaceRepository";
@@ -1269,6 +1270,7 @@ function AdminView({
     "success",
   );
   const [workflowMessage, setWorkflowMessage] = useState("");
+  const [previewEditionId, setPreviewEditionId] = useState("");
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
@@ -1282,6 +1284,10 @@ function AdminView({
         )
         .slice(0, 8),
     [createdDrafts, editions, workspaceEditions],
+  );
+  const previewEdition = useMemo(
+    () => reviewQueue.find((edition) => edition.id === previewEditionId) ?? null,
+    [previewEditionId, reviewQueue],
   );
 
   useEffect(() => {
@@ -1444,6 +1450,12 @@ function AdminView({
       return;
     }
 
+    if (nextStatus === "published" && edition.pages.length === 0) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("Generate a page preview before publishing this edition.");
+      return;
+    }
+
     setWorkflowEditionId(edition.id);
     setWorkflowStatus("success");
     setWorkflowMessage("");
@@ -1473,6 +1485,47 @@ function AdminView({
       setWorkflowStatus("error");
       setWorkflowMessage(
         error instanceof Error ? error.message : "Unable to update edition status.",
+      );
+    } finally {
+      setWorkflowEditionId("");
+    }
+  }
+
+  async function handleGeneratePreviewPages(edition: Edition) {
+    if (!authUser) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("Sign in before generating preview pages.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, edition.publisherId)) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("This account cannot manage that publisher.");
+      return;
+    }
+
+    setWorkflowEditionId(edition.id);
+    setWorkflowStatus("success");
+    setWorkflowMessage("");
+
+    try {
+      const updatedEdition = await generateEditionPreviewPages(edition, authUser);
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, updatedEdition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === updatedEdition.id ? updatedEdition : draft,
+        ),
+      );
+      setPreviewEditionId(updatedEdition.id);
+      setWorkflowStatus("success");
+      setWorkflowMessage("Preview pages generated for staff review.");
+    } catch (error) {
+      setWorkflowStatus("error");
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Unable to generate preview pages.",
       );
     } finally {
       setWorkflowEditionId("");
@@ -1802,6 +1855,7 @@ function AdminView({
                 edition.publisherId,
               );
               const isUpdating = workflowEditionId === edition.id;
+              const hasPreviewPages = edition.pages.length > 0;
 
               return (
                 <article className="draft-card" key={edition.id}>
@@ -1810,13 +1864,34 @@ function AdminView({
                     <span>
                       {edition.city} • {edition.date} • {formatRole(edition.status)}
                     </span>
-                    <small>{edition.sourceAssetName ?? "Metadata only"}</small>
+                    <small>
+                      {edition.sourceAssetName ?? "Metadata only"} •{" "}
+                      {hasPreviewPages
+                        ? `${edition.pages.length} preview page${edition.pages.length === 1 ? "" : "s"}`
+                        : "Preview pending"}
+                    </small>
                   </div>
                   <div className="draft-actions">
                     {edition.sourceAssetUrl && (
                       <a href={edition.sourceAssetUrl} target="_blank" rel="noreferrer">
                         Source
                       </a>
+                    )}
+                    {hasPreviewPages ? (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewEditionId(edition.id)}
+                      >
+                        Preview
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!canManageEdition || isUpdating}
+                        onClick={() => handleGeneratePreviewPages(edition)}
+                      >
+                        {isUpdating ? "Generating..." : "Generate preview"}
+                      </button>
                     )}
                     {edition.status === "published" ? (
                       <button
@@ -1829,8 +1904,13 @@ function AdminView({
                     ) : (
                       <button
                         type="button"
-                        disabled={!canManageEdition || isUpdating}
+                        disabled={!canManageEdition || isUpdating || !hasPreviewPages}
                         onClick={() => handleEditionStatusChange(edition, "published")}
+                        title={
+                          hasPreviewPages
+                            ? "Publish edition"
+                            : "Generate a preview before publishing"
+                        }
                       >
                         {isUpdating ? "Publishing..." : "Publish"}
                       </button>
@@ -1846,6 +1926,28 @@ function AdminView({
               <p className={`action-feedback ${workflowStatus}`}>{workflowMessage}</p>
             )}
           </div>
+          {previewEdition && previewEdition.pages.length > 0 && (
+            <div className="edition-preview-panel">
+              <div>
+                <span className="eyebrow">Staff preview</span>
+                <h3>{previewEdition.title}</h3>
+                <p>
+                  {previewEdition.city} • {previewEdition.date} •{" "}
+                  {previewEdition.pages.length} generated pages
+                </p>
+              </div>
+              <div className="preview-page-grid">
+                {previewEdition.pages.map((page) => (
+                  <article className="preview-page-card" key={page.id}>
+                    <span>Page {page.pageNumber}</span>
+                    <strong>{page.section}</strong>
+                    <h4>{page.headline}</h4>
+                    <p>{page.subhead}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </section>

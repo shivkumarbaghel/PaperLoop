@@ -11,7 +11,7 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
-import type { AccessRule, Edition, EditionStatus } from "../types";
+import type { AccessRule, Edition, EditionStatus, Page } from "../types";
 
 const maxUploadBytes = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -161,6 +161,37 @@ export async function updateEditionWorkflowStatus(
   };
 }
 
+export async function generateEditionPreviewPages(
+  edition: Edition,
+  user: User,
+): Promise<Edition> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.id || !edition.publisherId) {
+    throw new Error("Edition record is missing publisher or edition id.");
+  }
+
+  const pages = buildPreviewPages(edition);
+
+  await updateDoc(doc(firebase.db, "editions", edition.id), {
+    pages,
+    status: "review",
+    previewGeneratedAt: serverTimestamp(),
+    previewGeneratedBy: user.uid,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...edition,
+    pages,
+    status: "review",
+  };
+}
+
 function validateDraftInput(input: EditionDraftInput) {
   if (!input.publisherId || !input.title.trim() || !input.date || !input.city.trim()) {
     throw new Error("Publisher, title, date, and city are required.");
@@ -197,6 +228,20 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+function buildPreviewPages(edition: Edition): Page[] {
+  const sections = edition.sections.length ? edition.sections : ["मुख पृष्ठ"];
+
+  return sections.slice(0, 6).map((section, index) => ({
+    id: `${edition.id}-preview-p${index + 1}`,
+    editionId: edition.id,
+    pageNumber: index + 1,
+    section,
+    headline: index === 0 ? edition.title : `${section} preview`,
+    subhead: `${edition.city} edition • ${edition.date}`,
+    hotspots: [],
+  }));
 }
 
 function chunk<T>(values: T[], size: number) {

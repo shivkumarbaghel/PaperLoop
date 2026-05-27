@@ -67,6 +67,7 @@ Verified on 2026-05-27:
 - The Nepro admin account is bootstrapped as a `super_admin` with Storage upload claims.
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
 - Publisher staff can move edition records between review and published states from the Admin workspace.
+- Publisher staff can generate lightweight edition preview pages from uploaded edition metadata before publishing.
 
 ### Required Firebase Setup
 
