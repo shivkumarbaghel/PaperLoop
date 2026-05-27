@@ -46,14 +46,14 @@ async function readFirestoreContent(): Promise<PaperLoopContent> {
     readCollection<Campaign>("campaigns"),
   ]);
 
-  if (!publishers.length || !editions.length || !articles.length) {
+  if (!publishers.length || !editions.length) {
     return mockContent;
   }
 
   return {
     publishers,
     editions,
-    articles,
+    articles: articles.length ? articles : mockArticles,
     metrics: metrics.length ? metrics : mockMetrics,
     campaigns: campaigns.length ? campaigns : mockCampaigns,
     source: "firestore",

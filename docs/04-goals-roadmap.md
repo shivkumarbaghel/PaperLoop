@@ -6,6 +6,8 @@ Last updated: 2026-05-27
 
 Make local and regional newspapers digitally accessible, interactive, and community-driven without losing the familiar structure and trust of the daily paper.
 
+PaperLoop should digitize only authorized publisher assets; competitor e-paper links are references for workflow inspiration and publisher/source discovery, not a source for unauthorized copying.
+
 North-star metric:
 
 - Weekly engaged subscribers per active publisher.
@@ -27,6 +29,8 @@ Firebase bootstrap is complete enough to validate Phase 1 upload flows.
 - Super admin can now record publisher staff invites from the Admin workspace; a service-account script grants the matching Firebase Auth custom claims.
 - Edition records can now move from review to published, or back to review, inside the Admin workspace.
 - Uploaded edition drafts can generate lightweight staff preview pages from metadata before publishing; OCR/page extraction remains later work.
+- The reader can now choose published editions for a publisher, including preview-page editions, and empty article pages show a clipping-coming-next state.
+- Dashboard discovery now uses social ranking-style signals across subscriptions, bookmarks, likes, popularity, and relevance.
 
 The next active product milestone remains Phase 1: Publisher And Edition Foundation.
 

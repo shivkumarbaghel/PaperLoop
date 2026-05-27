@@ -99,9 +99,6 @@ import type {
 
 type View = "dashboard" | "reader" | "article" | "admin";
 
-const languages = ["All", "Hindi"];
-const regions = ["All", "Madhya Pradesh", "Delhi NCR", "Maharashtra", "Uttar Pradesh"];
-const topics = ["All", "Local", "Politics", "Business", "Education", "Culture"];
 const staffRoles: PublisherStaffMembership["role"][] = [
   "agency_admin",
   "publisher_admin",
@@ -115,6 +112,7 @@ function App() {
   const [selectedPublisherId, setSelectedPublisherId] = useState(
     mockContent.publishers[0].id,
   );
+  const [selectedEditionId, setSelectedEditionId] = useState("");
   const [selectedArticleId, setSelectedArticleId] = useState(
     mockContent.articles[0].id,
   );
@@ -124,6 +122,7 @@ function App() {
   const [topic, setTopic] = useState("All");
   const [pageIndex, setPageIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [readerMode, setReaderMode] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [emailLogin, setEmailLogin] = useState("");
   const [passwordLogin, setPasswordLogin] = useState("");
@@ -219,13 +218,35 @@ function App() {
     };
   }, []);
 
+  const languageOptions = useMemo(
+    () => ["All", ...unique(publishers.map((publisher) => publisher.language))],
+    [publishers],
+  );
+  const regionOptions = useMemo(
+    () => ["All", ...unique(publishers.map((publisher) => publisher.region))],
+    [publishers],
+  );
+  const topicOptions = useMemo(
+    () => ["All", ...unique(publishers.flatMap((publisher) => publisher.topics))],
+    [publishers],
+  );
+
   const selectedPublisher = publishers.find(
     (publisher) => publisher.id === selectedPublisherId,
-  ) ?? publishers[0];
+  ) ?? publishers[0] ?? mockContent.publishers[0];
+
+  const publisherEditions = useMemo(
+    () =>
+      editions
+        .filter((edition) => edition.publisherId === selectedPublisher.id)
+        .sort(compareEditionsForReader),
+    [editions, selectedPublisher.id],
+  );
 
   const selectedEdition =
-    editions.find((edition) => edition.publisherId === selectedPublisher.id) ??
-    editions[0];
+    publisherEditions.find((edition) => edition.id === selectedEditionId) ??
+    publisherEditions[0] ??
+    createPlaceholderEdition(selectedPublisher);
 
   const selectedArticle =
     articles.find((article) => article.id === selectedArticleId) ?? articles[0];
@@ -248,11 +269,16 @@ function App() {
 
         return matchesSearch && matchesLanguage && matchesRegion && matchesTopic;
       })
-      .sort((a, b) => b.popularityScore + b.relevanceScore - (a.popularityScore + a.relevanceScore));
+      .sort((a, b) => socialRankScore(b) - socialRankScore(a));
   }, [language, publishers, region, search, topic]);
 
   function openReader(publisher: Publisher) {
+    const nextEdition = editions
+      .filter((edition) => edition.publisherId === publisher.id)
+      .sort(compareEditionsForReader)[0];
+
     setSelectedPublisherId(publisher.id);
+    setSelectedEditionId(nextEdition?.id ?? "");
     setActiveView("reader");
     setPageIndex(0);
   }
@@ -349,6 +375,9 @@ function App() {
             language={language}
             region={region}
             topic={topic}
+            languageOptions={languageOptions}
+            regionOptions={regionOptions}
+            topicOptions={topicOptions}
             onSearch={setSearch}
             onLanguage={setLanguage}
             onRegion={setRegion}
@@ -365,10 +394,17 @@ function App() {
             userAccess={userAccess}
             publisher={selectedPublisher}
             edition={selectedEdition}
+            editions={publisherEditions}
             pageIndex={pageIndex}
             zoom={zoom}
+            readerMode={readerMode}
+            onEditionId={(editionId) => {
+              setSelectedEditionId(editionId);
+              setPageIndex(0);
+            }}
             onPageIndex={setPageIndex}
             onZoom={setZoom}
+            onReaderMode={setReaderMode}
             onOpenArticle={openArticle}
           />
         )}
@@ -537,6 +573,9 @@ interface DashboardProps {
   language: string;
   region: string;
   topic: string;
+  languageOptions: string[];
+  regionOptions: string[];
+  topicOptions: string[];
   onSearch: (value: string) => void;
   onLanguage: (value: string) => void;
   onRegion: (value: string) => void;
@@ -552,6 +591,9 @@ function Dashboard({
   language,
   region,
   topic,
+  languageOptions,
+  regionOptions,
+  topicOptions,
   onSearch,
   onLanguage,
   onRegion,
@@ -634,21 +676,21 @@ function Dashboard({
             icon={<Filter size={18} />}
             label="Language"
             value={language}
-            values={languages}
+            values={languageOptions}
             onChange={onLanguage}
           />
           <SelectFilter
             icon={<Globe2 size={18} />}
             label="Region"
             value={region}
-            values={regions}
+            values={regionOptions}
             onChange={onRegion}
           />
           <SelectFilter
             icon={<Sparkles size={18} />}
             label="Topic"
             value={topic}
-            values={topics}
+            values={topicOptions}
             onChange={onTopic}
           />
         </div>
@@ -731,7 +773,17 @@ function PublisherSection({
               <div className="score-stack">
                 <span>{publisher.language}</span>
                 <strong>{publisher.popularityScore}%</strong>
-                <small>popularity</small>
+                <small>social rank</small>
+              </div>
+              <div className="publisher-signals" aria-label="Reader signals">
+                <span>
+                  <Bookmark size={14} />
+                  {compactNumber(publisher.bookmarkCount)}
+                </span>
+                <span>
+                  <Sparkles size={14} />
+                  {compactNumber(publisher.likeCount)}
+                </span>
               </div>
               <button onClick={() => onOpenReader(publisher)}>
                 <BookOpen size={18} />
@@ -752,10 +804,14 @@ interface ReaderViewProps {
   userAccess: UserAccess;
   publisher: Publisher;
   edition: Edition;
+  editions: Edition[];
   pageIndex: number;
   zoom: number;
+  readerMode: boolean;
   onPageIndex: (value: number) => void;
   onZoom: (value: number) => void;
+  onReaderMode: (value: boolean) => void;
+  onEditionId: (value: string) => void;
   onOpenArticle: (articleId: string) => void;
 }
 
@@ -766,17 +822,22 @@ function ReaderView({
   userAccess,
   publisher,
   edition,
+  editions,
   pageIndex,
   zoom,
+  readerMode,
   onPageIndex,
   onZoom,
+  onReaderMode,
+  onEditionId,
   onOpenArticle,
 }: ReaderViewProps) {
   const page = edition.pages[pageIndex] ?? edition.pages[0];
   const canReadSelectedEdition = canReadEdition(edition, profile, userAccess);
   const pageArticles = articles.filter(
-    (article) => article.pageId === page.id && canReadArticle(article, profile, userAccess),
+    (article) => page && article.pageId === page.id && canReadArticle(article, profile, userAccess),
   );
+  const hasPages = edition.pages.length > 0;
 
   return (
     <section className="reader-layout">
@@ -798,20 +859,39 @@ function ReaderView({
           )}
         </div>
 
+        <label className="edition-select">
+          <span>Edition</span>
+          <select
+            value={edition.id}
+            onChange={(event) => onEditionId(event.target.value)}
+          >
+            {editions.length === 0 ? (
+              <option value={edition.id}>{edition.title}</option>
+            ) : (
+              editions.map((publisherEdition) => (
+                <option key={publisherEdition.id} value={publisherEdition.id}>
+                  {publisherEdition.title} • {publisherEdition.date} •{" "}
+                  {formatRole(publisherEdition.status)}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+
         <div className="edition-controls">
           <button
             onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
-            disabled={pageIndex === 0}
+            disabled={!hasPages || pageIndex === 0}
             aria-label="Previous page"
           >
             <ChevronLeft size={18} />
           </button>
           <span>
-            Page {page.pageNumber} of {edition.pages.length}
+            Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
           </span>
           <button
             onClick={() => onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))}
-            disabled={pageIndex === edition.pages.length - 1}
+            disabled={!hasPages || pageIndex === edition.pages.length - 1}
             aria-label="Next page"
           >
             <ChevronRight size={18} />
@@ -829,11 +909,24 @@ function ReaderView({
           <button onClick={() => onZoom(1)} aria-label="Fit page">
             <Fullscreen size={18} />
           </button>
+          <button
+            className={readerMode ? "active" : ""}
+            onClick={() => onReaderMode(!readerMode)}
+            aria-pressed={readerMode}
+          >
+            Reader mode
+          </button>
         </div>
 
         <div className="section-list">
-          {edition.sections.map((section) => (
-            <button key={section}>{section}</button>
+          {edition.pages.map((editionPage, index) => (
+            <button
+              className={index === pageIndex ? "active" : ""}
+              key={editionPage.id}
+              onClick={() => onPageIndex(index)}
+            >
+              {editionPage.section}
+            </button>
           ))}
         </div>
 
@@ -858,7 +951,7 @@ function ReaderView({
         <div className="viewer-toolbar">
           <div>
             <span className="eyebrow">Full-page e-paper</span>
-            <h1>{page.headline}</h1>
+            <h1>{page?.headline ?? edition.title}</h1>
           </div>
           <div className="viewer-actions">
             <button>
@@ -872,7 +965,8 @@ function ReaderView({
           </div>
         </div>
 
-        <div className="paper-stage">
+        <div className={`paper-stage ${readerMode ? "reader-mode" : ""}`}>
+          {hasPages && page ? (
           <div className="paper-page" style={{ transform: `scale(${zoom})` }}>
             <header>
               <span>{publisher.name}</span>
@@ -906,12 +1000,32 @@ function ReaderView({
               </button>
             ))}
           </div>
+          ) : (
+            <div className="empty-reader-page">
+              <Newspaper size={36} />
+              <strong>Preview pages are not generated yet</strong>
+              <p>
+                Publisher staff can generate a page preview from the Admin workspace before this
+                edition becomes readable.
+              </p>
+            </div>
+          )}
         </div>
 
         <section className="article-strip">
           <h3>Article posts from this page</h3>
           <div className="article-list">
-            {pageArticles.map((article) => (
+            {pageArticles.length === 0 ? (
+              <div className="empty-article-card">
+                <Sparkles size={20} />
+                <strong>Article clipping coming next</strong>
+                <p>
+                  This published preview page is readable now. Editors will add clickable story
+                  blocks, OCR text, and discussion threads in the clipping workflow.
+                </p>
+              </div>
+            ) : (
+              pageArticles.map((article) => (
               <button key={article.id} onClick={() => onOpenArticle(article.id)}>
                 <span>{article.section}</span>
                 <strong>{article.title}</strong>
@@ -919,7 +1033,8 @@ function ReaderView({
                   {article.stats.views.toLocaleString()} views • {article.stats.comments} comments
                 </small>
               </button>
-            ))}
+              ))
+            )}
           </div>
         </section>
       </div>
@@ -1156,6 +1271,53 @@ function ArticleView({
 
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function socialRankScore(publisher: Publisher) {
+  return (
+    publisher.popularityScore * 0.4 +
+    publisher.relevanceScore * 0.25 +
+    (publisher.subscriberCount / 1000) * 0.2 +
+    ((publisher.bookmarkCount ?? 0) / 1000) * 0.1 +
+    ((publisher.likeCount ?? 0) / 1000) * 0.05
+  );
+}
+
+function compactNumber(value = 0) {
+  return new Intl.NumberFormat("en-IN", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function compareEditionsForReader(a: Edition, b: Edition) {
+  const statusRank = (edition: Edition) => (edition.status === "published" ? 1 : 0);
+  const pageRank = (edition: Edition) => (edition.pages.length > 0 ? 1 : 0);
+
+  return (
+    statusRank(b) - statusRank(a) ||
+    pageRank(b) - pageRank(a) ||
+    b.date.localeCompare(a.date)
+  );
+}
+
+function createPlaceholderEdition(publisher: Publisher): Edition {
+  return {
+    id: `${publisher.id}-placeholder`,
+    publisherId: publisher.id,
+    title: `${publisher.name} edition`,
+    date: publisher.latestEditionDate,
+    city: publisher.city,
+    language: publisher.language,
+    sections: publisher.topics.slice(0, 4),
+    status: "review",
+    accessRule: "public",
+    pages: [],
+  };
 }
 
 function formatRole(value: string) {

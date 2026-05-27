@@ -39,6 +39,9 @@ export interface Publisher {
   isLeading: boolean;
   popularityScore: number;
   relevanceScore: number;
+  bookmarkCount: number;
+  likeCount: number;
+  sourceUrl?: string;
   subscriberCount: number;
   latestEditionDate: string;
   plan: "starter" | "growth" | "enterprise";

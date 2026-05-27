@@ -539,7 +539,7 @@ main {
 
 .publisher-card {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 14px;
   padding: 16px;
@@ -584,6 +584,22 @@ main {
   font-size: 1.3rem;
 }
 
+.publisher-signals {
+  display: grid;
+  gap: 6px;
+  min-width: 78px;
+}
+
+.publisher-signals span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  color: #315147;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .empty-state {
   margin: 0;
   color: #69746f;
@@ -617,6 +633,23 @@ main {
   line-height: 1.5;
 }
 
+.edition-select {
+  display: grid;
+  gap: 8px;
+  color: #3c4843;
+  font-weight: 800;
+}
+
+.edition-select select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #21332d;
+  background: #fffdf8;
+}
+
 .edition-controls,
 .tool-row,
 .viewer-actions,
@@ -637,6 +670,12 @@ main {
   border-radius: 8px;
   color: #21332d;
   background: #edf2ec;
+}
+
+.tool-row button.active,
+.section-list button.active {
+  color: #fff;
+  background: #165a4c;
 }
 
 .edition-controls span,
@@ -712,6 +751,44 @@ main {
   background:
     linear-gradient(135deg, rgba(23, 90, 76, 0.08), transparent),
     #deded6;
+}
+
+.paper-stage.reader-mode {
+  background: #f5f4ef;
+}
+
+.paper-stage.reader-mode .paper-page {
+  width: min(780px, 92vw);
+  box-shadow: 0 18px 70px rgba(31, 40, 36, 0.12);
+}
+
+.empty-reader-page,
+.empty-article-card {
+  display: grid;
+  gap: 10px;
+  padding: 22px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 8px;
+  color: #33413b;
+  background: #fffdf8;
+}
+
+.empty-reader-page {
+  max-width: 420px;
+  text-align: center;
+  place-items: center;
+}
+
+.empty-reader-page svg,
+.empty-article-card svg {
+  color: #165a4c;
+}
+
+.empty-reader-page p,
+.empty-article-card p {
+  margin: 0;
+  color: #69746f;
+  line-height: 1.5;
 }
 
 .paper-page {
@@ -1388,13 +1465,19 @@ main {
   }
 
   .score-stack,
+  .publisher-signals,
   .publisher-card button {
     grid-column: 1 / -1;
     justify-self: stretch;
   }
 
-  .score-stack {
+  .score-stack,
+  .publisher-signals {
     justify-items: start;
+  }
+
+  .publisher-signals span {
+    justify-content: flex-start;
   }
 
   .viewer-toolbar,

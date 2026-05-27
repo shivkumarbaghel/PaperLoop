@@ -19,6 +19,8 @@ PaperLoop starts as a publisher-first web platform where newspaper agencies uplo
 
 Native mobile apps, advanced AI/OCR automation, full social automation, affiliate marketplace, and event/webinar operations are later roadmap items after the responsive web MVP is validated.
 
+PaperLoop should ingest and digitize only publisher-owned, licensed, public-domain, or otherwise authorized edition assets. Reference e-paper URLs in seed data are used for discovery and competitive workflow inspiration, not for unauthorized content copying.
+
 ## App Stack
 
 - React + TypeScript with Vite.
@@ -68,6 +70,8 @@ Verified on 2026-05-27:
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
 - Publisher staff can move edition records between review and published states from the Admin workspace.
 - Publisher staff can generate lightweight edition preview pages from uploaded edition metadata before publishing.
+- Reader can switch between published editions for a publisher, including metadata-generated preview editions before article clipping is added.
+- Dashboard discovery ranks agencies with subscription, bookmark, like, popularity, and relevance signals.
 
 ### Required Firebase Setup
 
