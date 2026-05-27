@@ -23,6 +23,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
+import { resolveLoginEmailInput } from "./config/testLoginAliases";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -116,7 +117,7 @@ export async function signInWithEmailPassword(email: string, password: string) {
 
   const credential = await signInWithEmailAndPassword(
     firebase.auth,
-    email.trim(),
+    resolveLoginEmailInput(email),
     password,
   );
 

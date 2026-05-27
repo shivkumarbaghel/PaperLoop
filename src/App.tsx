@@ -289,8 +289,8 @@ function App() {
     if (view === "admin" && !canOpenAdminWorkspace(profile, userAccess)) {
       setAuthError(
         authUser
-          ? "This Google account does not have publisher workspace access yet."
-          : "Please sign in with an authorized publisher Google account.",
+          ? "This account does not have publisher workspace access yet."
+          : "Please sign in with an authorized admin or publisher account.",
       );
       return;
     }
@@ -528,13 +528,13 @@ function Header({
         ) : (
           <form className="login-form" onSubmit={onEmailSignIn}>
             <label>
-              <span className="sr-only">Email</span>
+              <span className="sr-only">User ID or email</span>
               <input
-                type="email"
+                type="text"
                 value={emailLogin}
                 onChange={(event) => onEmail(event.target.value)}
-                placeholder="admin email"
-                autoComplete="email"
+                placeholder="admin or publisher ID"
+                autoComplete="username"
               />
             </label>
             <label>

@@ -66,7 +66,7 @@ Verified on 2026-05-27:
 - Firestore and Storage rules have been deployed.
 - The default Firebase Storage bucket exists: `paperloop-2e121.firebasestorage.app` in `ASIA-SOUTH1`.
 - Firebase Authentication is initialized with Google and Email/Password sign-in enabled.
-- The Nepro admin account is bootstrapped as a `super_admin` with Storage upload claims.
+- The testing admin account uses the login ID `admin` and is bootstrapped as a `super_admin` with Storage upload claims.
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
 - Publisher staff can move edition records between review and published states from the Admin workspace.
 - Publisher staff can generate lightweight edition preview pages from uploaded edition metadata before publishing.
@@ -121,6 +121,28 @@ Verified on 2026-05-27:
    ```
 
 Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Storage upload authorization uses Firebase Auth custom claims seeded by `npm run seed:firestore` when the matching Auth user already exists. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
+
+### Test Admin And Publisher Accounts
+
+Create simple Email/Password test users, matching Firestore role profiles, publisher staff memberships, and `testAccounts/{loginId}` reference docs:
+
+```bash
+npm run seed:test-access
+```
+
+Default test password: `abc123`.
+
+| Login ID | Role | Publisher |
+| --- | --- | --- |
+| `admin` | `super_admin` | All test publishers |
+| `aajtak` | `publisher_admin` | Aaj Tak |
+| `livehindustan` | `publisher_admin` | Live Hindustan |
+| `amarujala` | `publisher_admin` | Amar Ujala |
+| `prabhatkhabar` | `publisher_admin` | Prabhat Khabar |
+| `jagran` | `publisher_admin` | Dainik Jagran |
+| `navodayatimes` | `publisher_admin` | Navodaya Times |
+
+The app accepts these login IDs directly in the header login form and maps them to Firebase Auth test emails like `admin@paperloop.test`. The seed also demotes the legacy `neprotechltd@gmail.com` admin profile to `reader` if that Auth user exists.
 
 ### Grant Publisher Staff Access
 

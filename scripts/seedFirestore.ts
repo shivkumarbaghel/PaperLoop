@@ -26,6 +26,14 @@ const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 const serviceAccountPath =
   process.env.GOOGLE_APPLICATION_CREDENTIALS ?? resolve("serviceAccountKey.json");
 const firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID ?? "(default)";
+const legacyPublisherIds = [
+  "bharat-daily",
+  "dakshin-samachar",
+  "purvanchal-patrika",
+  "dainik-jagran",
+  "live-hindustan",
+  "navodaya-times",
+];
 
 function loadLocalEnv() {
   const envPath = resolve(".env");
@@ -103,6 +111,17 @@ async function writeCollection(collectionName: string, documents: SeedDocument[]
 
   await batch.commit();
   console.log(`Seeded ${documents.length} ${collectionName} documents.`);
+}
+
+async function deleteDocuments(collectionName: string, documentIds: string[]) {
+  const batch = db.batch();
+
+  documentIds.forEach((documentId) => {
+    batch.delete(db.collection(collectionName).doc(documentId));
+  });
+
+  await batch.commit();
+  console.log(`Removed ${documentIds.length} legacy ${collectionName} documents.`);
 }
 
 async function seedAccessFixtures() {
@@ -185,6 +204,7 @@ async function setRoleClaims(userId: string, role: string, publisherIds: string[
 async function main() {
   console.log(`Seeding Firestore project: ${projectId}, database: ${firestoreDatabaseId}`);
   await writeCollection("publishers", publishers);
+  await deleteDocuments("publishers", legacyPublisherIds);
   await writeCollection("editions", editions);
   await writeCollection("articlePosts", articles);
   await writeCollection(

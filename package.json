@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "grant:access": "tsx scripts/grantPublisherAccess.ts",
-    "seed:firestore": "tsx scripts/seedFirestore.ts"
+    "seed:firestore": "tsx scripts/seedFirestore.ts",
+    "seed:test-access": "tsx scripts/seedTestAccess.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
