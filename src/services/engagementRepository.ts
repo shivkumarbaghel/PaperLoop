@@ -3,7 +3,7 @@ import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getFirebaseServices } from "../firebase";
 import type { ArticlePost, Comment } from "../types";
 
-export type EngagementType = "save" | "share" | "report" | "follow" | "comment";
+export type EngagementType = "like" | "save" | "share" | "report" | "follow" | "comment";
 
 export interface EngagementPayload {
   article: ArticlePost;

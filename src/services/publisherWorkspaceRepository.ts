@@ -11,7 +11,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { getBlob, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
 import type {
   AccessRule,
@@ -255,10 +255,12 @@ export async function saveArticleBlockDraft(
     section: input.section.trim(),
     summary: input.summary.trim(),
     body: input.body.trim(),
-    x: clampPercent(input.x),
-    y: clampPercent(input.y),
-    width: clampPercent(input.width),
-    height: clampPercent(input.height),
+    ...normalizeGeometry({
+      x: input.x,
+      y: input.y,
+      width: input.width,
+      height: input.height,
+    }),
     confidence: input.confidence ?? (input.source === "manual" ? 1 : 0.65),
     createdBy: user.uid,
   };
@@ -487,15 +489,26 @@ export async function createArticleBlockFromPreviewPage(
   validateArticleBlockInput(input);
 
   const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
-  const articleId = `${edition.id}-${slugify(input.title)}`;
-  const hotspot: ArticleHotspot = {
-    id: `${articleId}-hotspot`,
-    articleId,
-    label: input.hotspotLabel.trim(),
+  const articleId = createArticleId(edition, input);
+  const blockGeometry = normalizeGeometry({
     x: sourceBlock?.x ?? input.x ?? (page.hotspots.length % 2 === 0 ? 8 : 55),
     y: sourceBlock?.y ?? input.y ?? 18 + page.hotspots.length * 10,
     width: sourceBlock?.width ?? input.width ?? (page.hotspots.length % 2 === 0 ? 44 : 36),
     height: sourceBlock?.height ?? input.height ?? 22,
+  });
+  const clippedAsset = await createClippedArticleImage({
+    edition,
+    page,
+    articleId,
+    geometry: blockGeometry,
+  });
+  const hotspot: ArticleHotspot = {
+    id: `${articleId}-hotspot`,
+    articleId,
+    label: input.hotspotLabel.trim(),
+    ...blockGeometry,
+    blockId: input.blockId,
+    clippedImageUrl: clippedAsset?.url,
   };
   const nextPages = edition.pages.map((editionPage) =>
     editionPage.id === page.id
@@ -531,10 +544,16 @@ export async function createArticleBlockFromPreviewPage(
     summary: input.summary.trim(),
     body: input.body.trim(),
     clippedImageTone: slugify(input.section) || "local",
+    clippedImageUrl: clippedAsset?.url,
+    clippedImagePath: clippedAsset?.path,
+    sourcePageImageUrl: page.imageUrl,
+    sourceBlockId: input.blockId,
+    blockGeometry,
     accessRule: input.accessRule,
     discussionRule: input.discussionRule,
     stats: {
       views: 0,
+      likes: 0,
       saves: 0,
       shares: 0,
       comments: 0,
@@ -557,6 +576,8 @@ export async function createArticleBlockFromPreviewPage(
     input.blockId
       ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), {
           articlePostId: articleId,
+          clippedImageUrl: clippedAsset?.url,
+          clippedImagePath: clippedAsset?.path,
           status: "published",
           updatedAt: serverTimestamp(),
         })
@@ -584,6 +605,132 @@ async function getArticleBlock(blockId: string) {
   return snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as ArticleBlock) : null;
 }
 
+async function createClippedArticleImage({
+  edition,
+  page,
+  articleId,
+  geometry,
+}: {
+  edition: Edition;
+  page: Page;
+  articleId: string;
+  geometry: { x: number; y: number; width: number; height: number };
+}) {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return null;
+  }
+
+  const sourceBlob = await getBlob(
+    ref(firebase.storage, processedPageImagePath(edition, page)),
+  );
+  const imageBitmap = await createImageBitmap(sourceBlob);
+  const crop = toPixelCrop(geometry, imageBitmap.width, imageBitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = crop.width;
+  canvas.height = crop.height;
+
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    imageBitmap.close();
+    throw new Error("Unable to prepare the article clipping canvas.");
+  }
+
+  context.drawImage(
+    imageBitmap,
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
+    0,
+    0,
+    crop.width,
+    crop.height,
+  );
+  imageBitmap.close();
+
+  const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.9);
+  const clippedPath = [
+    "publishers",
+    edition.publisherId,
+    "editions",
+    edition.id,
+    "article-clips",
+    `${safeFileName(articleId)}.webp`,
+  ].join("/");
+  const clippedRef = ref(firebase.storage, clippedPath);
+
+  await uploadBytes(clippedRef, clippedBlob, {
+    contentType: "image/webp",
+    customMetadata: {
+      publisherId: edition.publisherId,
+      editionId: edition.id,
+      pageId: page.id,
+      articleId,
+    },
+  });
+
+  return {
+    path: clippedPath,
+    url: await getDownloadURL(clippedRef),
+  };
+}
+
+function processedPageImagePath(edition: Edition, page: Page) {
+  return [
+    "publishers",
+    edition.publisherId,
+    "editions",
+    edition.id,
+    "pages",
+    `page-${page.pageNumber}.png`,
+  ].join("/");
+}
+
+function toPixelCrop(
+  geometry: { x: number; y: number; width: number; height: number },
+  imageWidth: number,
+  imageHeight: number,
+) {
+  const x = Math.floor((clampPercent(geometry.x) / 100) * imageWidth);
+  const y = Math.floor((clampPercent(geometry.y) / 100) * imageHeight);
+  const maxWidth = Math.max(1, imageWidth - x);
+  const maxHeight = Math.max(1, imageHeight - y);
+  const width = Math.min(
+    maxWidth,
+    Math.max(1, Math.round((clampPercent(geometry.width) / 100) * imageWidth)),
+  );
+  const height = Math.min(
+    maxHeight,
+    Math.max(1, Math.round((clampPercent(geometry.height) / 100) * imageHeight)),
+  );
+
+  return { x, y, width, height };
+}
+
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Unable to create the clipped article image."));
+          return;
+        }
+
+        resolve(blob);
+      },
+      type,
+      quality,
+    );
+  });
+}
+
 function validateBlockInput(input: ArticleBlockDraftInput) {
   if (!input.publisherId || !input.editionId || !input.pageId || !input.label.trim()) {
     throw new Error("Publisher, edition, page, and block label are required.");
@@ -600,6 +747,17 @@ function clampPercent(value: number) {
   }
 
   return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+}
+
+function normalizeGeometry(
+  geometry: { x: number; y: number; width: number; height: number },
+) {
+  const x = Math.min(99, clampPercent(geometry.x));
+  const y = Math.min(99, clampPercent(geometry.y));
+  const width = Math.max(1, Math.min(clampPercent(geometry.width), 100 - x));
+  const height = Math.max(1, Math.min(clampPercent(geometry.height), 100 - y));
+
+  return { x, y, width, height };
 }
 
 function validateDraftInput(input: EditionDraftInput) {
@@ -636,6 +794,19 @@ function validateArticleBlockInput(input: ArticleBlockInput) {
 
 function createEditionId(input: EditionDraftInput) {
   return `${input.publisherId}-${input.date}-${slugify(input.city)}`;
+}
+
+function createArticleId(edition: Edition, input: ArticleBlockInput) {
+  if (input.blockId) {
+    return `${input.blockId}-post`;
+  }
+
+  const articleSlug =
+    slugify(input.title) ||
+    slugify(input.hotspotLabel) ||
+    `story-${Date.now().toString(36)}`;
+
+  return `${edition.id}-${articleSlug}`;
 }
 
 function safeFileName(fileName: string) {

@@ -23,6 +23,7 @@ import {
   Flag,
   Fullscreen,
   Globe2,
+  Heart,
   LayoutDashboard,
   Lock,
   LogOut,
@@ -1191,9 +1192,18 @@ function ArticleView({
       </button>
 
       <article className="article-panel">
-        <div className={`clip-visual ${article.clippedImageTone}`}>
-          <span>{article.section}</span>
-        </div>
+        {article.clippedImageUrl ? (
+          <figure className="article-clip-image">
+            <img src={article.clippedImageUrl} alt={article.title} />
+            <figcaption>
+              Page {article.pageNumber} clipping • {article.section}
+            </figcaption>
+          </figure>
+        ) : (
+          <div className={`clip-visual ${article.clippedImageTone}`}>
+            <span>{article.section}</span>
+          </div>
+        )}
         <div className="article-content">
           <div className="article-kicker">
             <span>{article.section}</span>
@@ -1233,6 +1243,13 @@ function ArticleView({
             </div>
           )}
           <div className="engagement-row">
+            <button
+              onClick={() => handleEngagement("like")}
+              disabled={pendingAction === "like" || !canReadSelectedArticle}
+            >
+              <Heart size={18} />
+              {(article.stats.likes ?? 0).toLocaleString()}
+            </button>
             <button
               onClick={() => handleEngagement("save")}
               disabled={pendingAction === "save" || !canReadSelectedArticle}
@@ -1429,7 +1446,10 @@ function buildPublisherStats(
 ): MetricCard[] {
   const totalViews = articles.reduce((sum, article) => sum + article.stats.views, 0);
   const totalShares = articles.reduce((sum, article) => sum + article.stats.shares, 0);
-  const totalLikes = articles.reduce((sum, article) => sum + article.stats.saves, 0);
+  const totalLikes = articles.reduce(
+    (sum, article) => sum + (article.stats.likes ?? article.stats.saves),
+    0,
+  );
   const totalFollowers = articles.reduce(
     (sum, article) => sum + article.author.followers,
     publishers.reduce((publisherSum, publisher) => publisherSum + publisher.subscriberCount, 0),
@@ -1526,6 +1546,7 @@ function AdminView({
   >("loading");
   const [workspaceBlocks, setWorkspaceBlocks] = useState<ArticleBlock[]>([]);
   const [workspaceComments, setWorkspaceComments] = useState<PublisherCommentActivity[]>([]);
+  const [createdArticles, setCreatedArticles] = useState<ArticlePost[]>([]);
   const [createdCampaigns, setCreatedCampaigns] = useState<Campaign[]>([]);
   const [staffDirectory, setStaffDirectory] = useState<PublisherStaffMembership[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PublisherStaffInvite[]>([]);
@@ -1630,8 +1651,16 @@ function AdminView({
     (selectedBlockId
       ? workspaceBlocks.find((block) => block.id === selectedBlockId)
       : null) ?? null;
-  const publisherArticles = articles.filter((article) =>
-    workspacePublisherIds.includes(article.publisherId),
+  const publisherArticles = useMemo(
+    () =>
+      [
+        ...createdArticles,
+        ...articles.filter(
+          (article) =>
+            !createdArticles.some((createdArticle) => createdArticle.id === article.id),
+        ),
+      ].filter((article) => workspacePublisherIds.includes(article.publisherId)),
+    [articles, createdArticles, workspacePublisherIds],
   );
   const workspaceCampaigns = useMemo(
     () => [
@@ -2173,6 +2202,7 @@ function AdminView({
           draft.id === result.edition.id ? result.edition : draft,
         ),
       );
+      setCreatedArticles((currentArticles) => [result.article, ...currentArticles]);
       setArticleTitle("");
       setArticleSummary("");
       setArticleBody("");
@@ -2182,12 +2212,14 @@ function AdminView({
           upsertBlock(currentBlocks, {
             ...selectedBlock,
             articlePostId: result.article.id,
+            clippedImageUrl: result.article.clippedImageUrl,
+            clippedImagePath: result.article.clippedImagePath,
             status: "published",
           }),
         );
       }
       setArticleCreateStatus("success");
-      setArticleCreateMessage("Article block created and linked to the preview page.");
+      setArticleCreateMessage("Article post created with a saved clipping image.");
     } catch (error) {
       setArticleCreateStatus("error");
       setArticleCreateMessage(
@@ -2791,7 +2823,8 @@ function AdminView({
                 </div>
                 <small>
                   {article.stats.views.toLocaleString()} views •{" "}
-                  {article.stats.saves.toLocaleString()} likes/saves •{" "}
+                  {(article.stats.likes ?? article.stats.saves).toLocaleString()} likes •{" "}
+                  {article.stats.saves.toLocaleString()} saves •{" "}
                   {article.stats.shares.toLocaleString()} shares •{" "}
                   {article.stats.comments} comments
                 </small>
@@ -2997,6 +3030,7 @@ function AdminView({
                           <span>
                             {formatRole(block.type)} • {formatRole(block.status)}
                           </span>
+                          {block.clippedImageUrl && <small>Clipping saved</small>}
                         </button>
                       ))}
                     </div>
@@ -3076,6 +3110,12 @@ function AdminView({
                   <span className="eyebrow">Manual clipping</span>
                   <h3>Review AI block or draw your own</h3>
                 </div>
+                {selectedBlock?.clippedImageUrl && (
+                  <figure className="saved-clip-preview">
+                    <img src={selectedBlock.clippedImageUrl} alt={selectedBlock.title} />
+                    <figcaption>Saved article clipping in Firebase Storage</figcaption>
+                  </figure>
+                )}
                 <div className="form-grid">
                   <label>
                     <span>Preview page</span>

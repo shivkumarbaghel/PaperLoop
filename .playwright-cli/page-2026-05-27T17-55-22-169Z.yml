@@ -1,0 +1,228 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "PL PaperLoop e-akhabaar platform" [ref=e5] [cursor=pointer]:
+      - generic [ref=e6]: PL
+      - generic [ref=e7]:
+        - strong [ref=e8]: PaperLoop
+        - generic [ref=e9]: e-akhabaar platform
+    - navigation "Primary navigation" [ref=e10]:
+      - button "Dashboard" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: Dashboard
+      - button "Reader" [ref=e17] [cursor=pointer]:
+        - img [ref=e18]
+        - text: Reader
+      - button "Admin" [active] [ref=e20] [cursor=pointer]:
+        - img [ref=e328]
+        - text: Admin
+    - generic [ref=e24]:
+      - generic [ref=e330]:
+        - text: Navodaya Times Publisher Admin
+        - generic [ref=e333]: publisher_admin
+      - button "Sign out" [ref=e334] [cursor=pointer]:
+        - img [ref=e335]
+  - main [ref=e42]:
+    - generic [ref=e338]:
+      - generic [ref=e339]:
+        - generic [ref=e340]:
+          - generic [ref=e341]: Publisher dashboard
+          - heading "Upload, clip, publish, track reach, and manage advertiser campaigns." [level=1] [ref=e342]
+        - link "New edition upload" [ref=e343] [cursor=pointer]:
+          - /url: "#edition-upload"
+          - img [ref=e344]
+          - text: New edition upload
+      - generic [ref=e348]:
+        - article [ref=e349]:
+          - generic [ref=e350]: Reach
+          - strong [ref=e351]: "0"
+          - generic [ref=e352]: 14 blocks
+        - article [ref=e353]:
+          - generic [ref=e354]: Followers
+          - strong [ref=e355]: 17.6K
+          - generic [ref=e356]: 1 publisher
+        - article [ref=e357]:
+          - generic [ref=e358]: Likes
+          - strong [ref=e359]: "0"
+          - generic [ref=e360]: 0 shares
+        - article [ref=e361]:
+          - generic [ref=e362]: Viewers
+          - strong [ref=e363]: "0"
+          - generic [ref=e364]: 0 comments
+        - article [ref=e365]:
+          - generic [ref=e366]: Editions
+          - strong [ref=e367]: "4"
+          - generic [ref=e368]: 4 total
+      - generic [ref=e369]:
+        - generic [ref=e370]:
+          - generic [ref=e371]:
+            - generic [ref=e372]: Publisher workspace
+            - heading "New edition draft" [level=2] [ref=e373]
+          - generic [ref=e374]:
+            - generic [ref=e375]:
+              - generic [ref=e376]:
+                - generic [ref=e377]: Publisher
+                - combobox "Publisher" [ref=e378]:
+                  - option "Navodaya Times" [selected]
+              - generic [ref=e379]:
+                - generic [ref=e380]: Title
+                - textbox "Title" [ref=e381]:
+                  - /placeholder: Narmada Times - Jabalpur
+                  - text: Today edition
+              - generic [ref=e382]:
+                - generic [ref=e383]: Date
+                - textbox "Date" [ref=e384]: 2026-05-27
+              - generic [ref=e385]:
+                - generic [ref=e386]: City
+                - textbox "City" [ref=e387]: New Delhi
+              - generic [ref=e388]:
+                - generic [ref=e389]: Language
+                - textbox "Language" [ref=e390]: Hindi
+              - generic [ref=e391]:
+                - generic [ref=e392]: Access
+                - combobox "Access" [ref=e393]:
+                  - option "Public" [selected]
+                  - option "Subscriber only"
+                  - option "Staff only"
+            - generic [ref=e394]:
+              - generic [ref=e395]: Sections
+              - textbox "Sections" [ref=e396]:
+                - /placeholder: मुख पृष्ठ, शहर, बिज़नेस
+                - text: मुख पृष्ठ, शहर
+            - generic [ref=e397]:
+              - generic [ref=e398]: Source PDF or page image
+              - button "Source PDF or page image" [ref=e399]
+            - button "Upload draft" [ref=e400] [cursor=pointer]:
+              - img [ref=e401]
+              - text: Upload draft
+        - generic [ref=e405]:
+          - generic [ref=e406]:
+            - generic [ref=e407]: Review workflow
+            - heading "Issue processing" [level=2] [ref=e408]
+          - generic [ref=e409]:
+            - generic [ref=e410]:
+              - img [ref=e411]
+              - generic [ref=e414]: Edition metadata captured
+              - generic [ref=e415]: Done
+            - generic [ref=e416]:
+              - img [ref=e417]
+              - generic [ref=e420]: PDF/page images uploaded
+              - generic [ref=e421]: Done
+            - generic [ref=e422]:
+              - img [ref=e423]
+              - generic [ref=e426]: Staff review queue
+              - generic [ref=e427]: Done
+            - generic [ref=e428]:
+              - img [ref=e429]
+              - generic [ref=e432]: Edition published
+              - generic [ref=e433]: Done
+            - generic [ref=e434]:
+              - img [ref=e435]
+              - generic [ref=e438]: Article hotspots clipped
+              - generic [ref=e439]: Next
+            - generic [ref=e440]:
+              - img [ref=e441]
+              - generic [ref=e444]: OCR text corrected
+              - generic [ref=e445]: Next
+        - generic [ref=e446]:
+          - generic [ref=e447]:
+            - generic [ref=e448]: Targeted campaigns
+            - heading "Advertiser placements" [level=2] [ref=e449]
+          - generic [ref=e450]:
+            - generic [ref=e451]:
+              - generic [ref=e452]:
+                - generic [ref=e453]: Campaign
+                - textbox "Campaign" [ref=e454]:
+                  - /placeholder: Front page sponsor
+              - generic [ref=e455]:
+                - generic [ref=e456]: Advertiser
+                - textbox "Advertiser" [ref=e457]:
+                  - /placeholder: Local advertiser
+              - generic [ref=e458]:
+                - generic [ref=e459]: Placement
+                - combobox "Placement" [ref=e460]:
+                  - option "Publisher" [selected]
+                  - option "Edition"
+                  - option "Page"
+                  - option "Section"
+                  - option "Article"
+              - generic [ref=e461]:
+                - generic [ref=e462]: Budget
+                - textbox "Budget" [ref=e463]: Rs 25K
+            - generic [ref=e464]:
+              - generic [ref=e465]: Targeting
+              - textbox "Targeting" [ref=e466]:
+                - /placeholder: Hindi readers, Delhi NCR, education articles
+            - button "Create campaign" [ref=e467] [cursor=pointer]:
+              - img [ref=e468]
+              - text: Create campaign
+          - paragraph [ref=e472]: No advertiser campaigns for this publisher yet.
+        - generic [ref=e473]:
+          - generic [ref=e474]:
+            - generic [ref=e475]: Content strategy
+            - heading "Optimization signals" [level=2] [ref=e476]
+          - generic [ref=e477]:
+            - article [ref=e478]:
+              - img [ref=e479]
+              - generic [ref=e482]:
+                - strong [ref=e483]: High reach
+                - paragraph [ref=e484]: Civic stories drive 31% more shares than average.
+            - article [ref=e485]:
+              - img [ref=e486]
+              - generic [ref=e488]:
+                - strong [ref=e489]: Feedback
+                - paragraph [ref=e490]: Parents ask for school-wise safety lists.
+            - article [ref=e491]:
+              - img [ref=e492]
+              - generic [ref=e495]:
+                - strong [ref=e496]: Revenue
+                - paragraph [ref=e497]: Education ads convert best beside subscriber-only stories.
+        - generic [ref=e498]:
+          - generic [ref=e499]:
+            - generic [ref=e500]: Article performance
+            - heading "Blocks, comments, likes, shares, and views" [level=2] [ref=e501]
+          - paragraph [ref=e503]: Published article blocks will appear here.
+          - generic [ref=e504]:
+            - heading "Latest comments and reports" [level=3] [ref=e505]
+            - paragraph [ref=e506]: No article comments for this publisher yet.
+        - generic [ref=e507]:
+          - generic [ref=e508]:
+            - generic [ref=e509]: Edition review
+            - heading "Review and publish queue" [level=2] [ref=e510]
+          - generic [ref=e511]:
+            - button "Refresh workspace" [ref=e512] [cursor=pointer]
+            - generic [ref=e513]: Smart processing creates page images, thumbnails, and AI suggested clips.
+          - generic [ref=e514]:
+            - article [ref=e515]:
+              - generic [ref=e516]:
+                - strong [ref=e517]: OpenAI key smoke test
+                - generic [ref=e518]: New Delhi • 2026-05-28 • Review
+                - generic [ref=e519]: navodayatimes.png • 1 page with image
+              - generic [ref=e520]:
+                - button "Preview" [ref=e521] [cursor=pointer]
+                - button "Publish" [ref=e522] [cursor=pointer]
+            - article [ref=e523]:
+              - generic [ref=e524]:
+                - strong [ref=e525]: OpenAI rerun test
+                - generic [ref=e526]: New Delhi • 2026-05-28 • Review
+                - generic [ref=e527]: navodayatimes.png • 1 page with image
+              - generic [ref=e528]:
+                - button "Preview" [ref=e529] [cursor=pointer]
+                - button "Publish" [ref=e530] [cursor=pointer]
+            - article [ref=e531]:
+              - generic [ref=e532]:
+                - strong [ref=e533]: OpenAI rerun test 2
+                - generic [ref=e534]: New Delhi • 2026-05-28 • Review
+                - generic [ref=e535]: navodayatimes.png • 1 page with image
+              - generic [ref=e536]:
+                - button "Preview" [ref=e537] [cursor=pointer]
+                - button "Publish" [ref=e538] [cursor=pointer]
+            - article [ref=e539]:
+              - generic [ref=e540]:
+                - strong [ref=e541]: Navodaya Times smoke edition
+                - generic [ref=e542]: New Delhi • 2026-05-27 • Review
+                - generic [ref=e543]: navodayatimes.png • 1 page with image
+              - generic [ref=e544]:
+                - link "Source" [ref=e545] [cursor=pointer]:
+                  - /url: https://storage.googleapis.com/paperloop-2e121.firebasestorage.app/publishers/navodayatimes/editions/navodayatimes-2026-05-27-new-delhi-smoke/source/navodayatimes.png?GoogleAccessId=firebase-adminsdk-fbsvc%40paperloop-2e121.iam.gserviceaccount.com&Expires=1780500128&Signature=UpUXbqL1EaIgGx0Vet9YVlbbkyw%2FQv262TzXhqs5jyAPScoRDVc1R9pPpcyZQuCeXwRbZiKDkBvp8mx9vaeMOCd0%2Fec1vzO2FVmZD9vFTtQowGFjDDJ9kE3iSMS12iYWhHn8uFGfrfSHWyN%2BVlwzzqUrcNSnXtrpzhtErxQbGkPGyPSWEinUWsWyRXDgFj3ZJk0J7LP9Rj364Kee8bVpSkq47woK2UvbA2CsacjeHsrS0%2BTd71fswcWM69w04FkMGrCDSbdfGuuxPhBNmicUAoEqcEp0poqy5tuoXwr1qp6htpoqrXUFRRfzqrXWpE7zUX1YuZzQMQLI6hOckw4yLg%3D%3D
+                - button "Preview" [ref=e546] [cursor=pointer]
+                - button "Publish" [ref=e547] [cursor=pointer]

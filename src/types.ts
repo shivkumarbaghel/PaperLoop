@@ -91,6 +91,8 @@ export interface ArticleHotspot {
   y: number;
   width: number;
   height: number;
+  blockId?: string;
+  clippedImageUrl?: string;
 }
 
 export interface ArticlePost {
@@ -106,10 +108,21 @@ export interface ArticlePost {
   summary: string;
   body: string;
   clippedImageTone: string;
+  clippedImageUrl?: string;
+  clippedImagePath?: string;
+  sourcePageImageUrl?: string;
+  sourceBlockId?: string;
+  blockGeometry?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
   stats: {
     views: number;
+    likes?: number;
     saves: number;
     shares: number;
     comments: number;
@@ -209,6 +222,8 @@ export interface ArticleBlock {
   height: number;
   confidence: number;
   articlePostId?: string;
+  clippedImageUrl?: string;
+  clippedImagePath?: string;
   createdBy?: string;
 }
 

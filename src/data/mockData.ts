@@ -272,7 +272,7 @@ export const articles: ArticlePost[] = [
     clippedImageTone: "civic",
     accessRule: "public",
     discussionRule: "subscriber_only",
-    stats: { views: 18420, saves: 820, shares: 1410, comments: 96 },
+    stats: { views: 18420, likes: 2180, saves: 820, shares: 1410, comments: 96 },
     comments: [
       {
         id: "c1",
@@ -314,7 +314,7 @@ export const articles: ArticlePost[] = [
     clippedImageTone: "market",
     accessRule: "public",
     discussionRule: "logged_in",
-    stats: { views: 9630, saves: 430, shares: 520, comments: 34 },
+    stats: { views: 9630, likes: 910, saves: 430, shares: 520, comments: 34 },
     comments: [],
     multimedia: [
       {
@@ -341,7 +341,7 @@ export const articles: ArticlePost[] = [
     clippedImageTone: "education",
     accessRule: "subscriber_only",
     discussionRule: "subscriber_only",
-    stats: { views: 13200, saves: 760, shares: 980, comments: 58 },
+    stats: { views: 13200, likes: 1420, saves: 760, shares: 980, comments: 58 },
     comments: [
       {
         id: "c3",

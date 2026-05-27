@@ -333,6 +333,7 @@ async function detectBlocks(
               text: [
                 "Identify newspaper article and advertisement blocks in this Hindi e-paper page.",
                 "Return normalized percentage coordinates relative to the page image.",
+                "Coordinates must use 0-100 percentages, and every block must satisfy x + width <= 100 and y + height <= 100.",
                 "Keep body text short; editors will correct OCR manually.",
               ].join(" "),
             },
@@ -413,19 +414,20 @@ async function detectBlocks(
 function normalizeBlocks(blocks: SuggestedBlock[], page: PageAssetResult) {
   const normalized = blocks
     .filter((block) => block.width > 0 && block.height > 0)
-    .map((block, index) => ({
-      type: block.type,
-      label: block.label || `Block ${index + 1}`,
-      title: block.title || `${page.section} story ${index + 1}`,
-      section: block.section || page.section,
-      summary: block.summary || "AI suggested article block. Review before publishing.",
-      body: block.body || "OCR draft requires editor review.",
-      x: clampPercent(block.x),
-      y: clampPercent(block.y),
-      width: clampPercent(block.width),
-      height: clampPercent(block.height),
-      confidence: Math.max(0, Math.min(1, block.confidence || 0.5)),
-    }));
+    .map((block, index) => {
+      const geometry = normalizeGeometry(block);
+
+      return {
+        type: block.type,
+        label: block.label || `Block ${index + 1}`,
+        title: block.title || `${page.section} story ${index + 1}`,
+        section: block.section || page.section,
+        summary: block.summary || "AI suggested article block. Review before publishing.",
+        body: block.body || "OCR draft requires editor review.",
+        ...geometry,
+        confidence: Math.max(0, Math.min(1, block.confidence || 0.5)),
+      };
+    });
 
   return normalized.length ? normalized : fallbackBlocks(page);
 }
@@ -467,4 +469,13 @@ function clampPercent(value: number) {
   }
 
   return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+}
+
+function normalizeGeometry(block: Pick<SuggestedBlock, "x" | "y" | "width" | "height">) {
+  const x = Math.min(99, clampPercent(block.x));
+  const y = Math.min(99, clampPercent(block.y));
+  const width = Math.max(1, Math.min(clampPercent(block.width), 100 - x));
+  const height = Math.max(1, Math.min(clampPercent(block.height), 100 - y));
+
+  return { x, y, width, height };
 }

@@ -151,8 +151,11 @@ service cloud.firestore {
     }
 
     match /comments/{commentId} {
-      allow read: if exists(articlePath(resource.data.articlePostId))
-        && canReadContent(get(articlePath(resource.data.articlePostId)).data);
+      allow read: if canManagePublisher(resource.data.publisherId)
+        || (
+          exists(articlePath(resource.data.articlePostId))
+          && canReadContent(get(articlePath(resource.data.articlePostId)).data)
+        );
       allow create: if signedIn()
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == "published"
@@ -166,7 +169,7 @@ service cloud.firestore {
     match /engagements/{engagementId} {
       allow create: if signedIn()
         && request.resource.data.userId == request.auth.uid
-        && request.resource.data.type in ["save", "share", "report", "follow", "comment"]
+        && request.resource.data.type in ["like", "save", "share", "report", "follow", "comment"]
         && request.resource.data.status == "active"
         && exists(articlePath(request.resource.data.articlePostId))
         && canReadContent(get(articlePath(request.resource.data.articlePostId)).data);
