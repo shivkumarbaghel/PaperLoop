@@ -29,7 +29,8 @@ Firebase bootstrap is complete enough to validate Phase 1 upload flows.
 - Super admin can now record publisher staff invites from the Admin workspace; a service-account script grants the matching Firebase Auth custom claims.
 - Edition records can now move from review to published, or back to review, inside the Admin workspace.
 - Uploaded edition drafts can generate lightweight staff preview pages from metadata before publishing; OCR/page extraction remains later work.
-- The reader can now choose published editions for a publisher, including preview-page editions, and empty article pages show a clipping-coming-next state.
+- The reader can now choose published editions for a publisher, open uploaded source assets, and read preview-page editions.
+- Staff can now manually clip a preview page into a published article post with a linked hotspot, readable text, and discussion access rules.
 - Dashboard discovery now uses social ranking-style signals across subscriptions, bookmarks, likes, popularity, and relevance.
 
 The next active product milestone remains Phase 1: Publisher And Edition Foundation.

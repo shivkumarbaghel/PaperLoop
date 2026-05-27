@@ -70,7 +70,8 @@ Verified on 2026-05-27:
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
 - Publisher staff can move edition records between review and published states from the Admin workspace.
 - Publisher staff can generate lightweight edition preview pages from uploaded edition metadata before publishing.
-- Reader can switch between published editions for a publisher, including metadata-generated preview editions before article clipping is added.
+- Reader can switch between published editions for a publisher, open the uploaded source PDF/image, and read metadata-generated preview editions.
+- Staff can manually create a clickable article block from a preview page; OCR/page extraction remains a later automation step.
 - Dashboard discovery ranks agencies with subscription, bookmark, like, popularity, and relevance signals.
 
 ### Required Firebase Setup

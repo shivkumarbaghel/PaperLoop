@@ -93,7 +93,6 @@ import type {
   Edition,
   EditionStatus,
   MetricCard,
-  Page,
   Publisher,
   PublisherStaffInvite,
   PublisherStaffMembership,
@@ -841,6 +840,8 @@ function ReaderView({
     (article) => page && article.pageId === page.id && canReadArticle(article, profile, userAccess),
   );
   const hasPages = edition.pages.length > 0;
+  const hasSourceAsset = Boolean(edition.sourceAssetUrl);
+  const isPdfSource = edition.sourceAssetType === "application/pdf";
 
   return (
     <section className="reader-layout">
@@ -933,6 +934,21 @@ function ReaderView({
           ))}
         </div>
 
+        {hasSourceAsset && (
+          <div className="source-asset-card">
+            <span className="eyebrow">Uploaded issue</span>
+            <strong>{edition.sourceAssetName ?? "Source edition file"}</strong>
+            <p>
+              This is the original publisher upload. PaperLoop preview pages and clips are
+              generated on top of it.
+            </p>
+            <a href={edition.sourceAssetUrl} target="_blank" rel="noreferrer">
+              <Newspaper size={16} />
+              Open source {isPdfSource ? "PDF" : "asset"}
+            </a>
+          </div>
+        )}
+
         <div className="ad-card">
           <span className="eyebrow">Print to digital ad</span>
           <strong>Local coaching sponsor</strong>
@@ -967,6 +983,26 @@ function ReaderView({
             </button>
           </div>
         </div>
+
+        {hasSourceAsset && (
+          <section className="source-asset-reader">
+            <div>
+              <span className="eyebrow">Original upload</span>
+              <strong>{edition.sourceAssetName ?? "Source edition file"}</strong>
+            </div>
+            {isPdfSource ? (
+              <iframe
+                src={edition.sourceAssetUrl}
+                title={`${edition.title} uploaded PDF`}
+              />
+            ) : (
+              <img
+                src={edition.sourceAssetUrl}
+                alt={`${edition.title} uploaded page`}
+              />
+            )}
+          </section>
+        )}
 
         <div className={`paper-stage ${readerMode ? "reader-mode" : ""}`}>
           {hasPages && page ? (
@@ -1474,18 +1510,6 @@ function AdminView({
     null;
 
   useEffect(() => {
-    if (!previewEdition?.pages.length) {
-      setArticlePageId("");
-      return;
-    }
-
-    if (!previewEdition.pages.some((page) => page.id === articlePageId)) {
-      setArticlePageId(previewEdition.pages[0].id);
-      setArticleSection(previewEdition.pages[0].section);
-    }
-  }, [articlePageId, previewEdition]);
-
-  useEffect(() => {
     let active = true;
 
     getPublisherWorkspaceEditions(workspacePublisherIds)
@@ -1715,6 +1739,8 @@ function AdminView({
         ),
       );
       setPreviewEditionId(updatedEdition.id);
+      setArticlePageId(updatedEdition.pages[0]?.id ?? "");
+      setArticleSection(updatedEdition.pages[0]?.section ?? articleSection);
       setWorkflowStatus("success");
       setWorkflowMessage("Preview pages generated for staff review.");
     } catch (error) {
@@ -2132,7 +2158,11 @@ function AdminView({
                     {hasPreviewPages ? (
                       <button
                         type="button"
-                        onClick={() => setPreviewEditionId(edition.id)}
+                        onClick={() => {
+                          setPreviewEditionId(edition.id);
+                          setArticlePageId(edition.pages[0]?.id ?? "");
+                          setArticleSection(edition.pages[0]?.section ?? articleSection);
+                        }}
                       >
                         Preview
                       </button>
@@ -2198,6 +2228,123 @@ function AdminView({
                   </article>
                 ))}
               </div>
+              <form className="article-block-form" onSubmit={handleArticleBlockSubmit}>
+                <div className="section-heading compact">
+                  <span className="eyebrow">Manual clipping</span>
+                  <h3>Create readable article block</h3>
+                </div>
+                <div className="form-grid">
+                  <label>
+                    <span>Preview page</span>
+                    <select
+                      value={selectedArticlePage?.id ?? ""}
+                      onChange={(event) => {
+                        const nextPage = previewEdition.pages.find(
+                          (page) => page.id === event.target.value,
+                        );
+
+                        setArticlePageId(event.target.value);
+
+                        if (nextPage) {
+                          setArticleSection(nextPage.section);
+                        }
+                      }}
+                    >
+                      {previewEdition.pages.map((page) => (
+                        <option key={page.id} value={page.id}>
+                          Page {page.pageNumber} • {page.section}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Section</span>
+                    <input
+                      value={articleSection}
+                      onChange={(event) => setArticleSection(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Title</span>
+                    <input
+                      value={articleTitle}
+                      onChange={(event) => setArticleTitle(event.target.value)}
+                      placeholder="Readable article headline"
+                    />
+                  </label>
+                  <label>
+                    <span>Hotspot label</span>
+                    <input
+                      value={articleHotspotLabel}
+                      onChange={(event) => setArticleHotspotLabel(event.target.value)}
+                      placeholder="Open story"
+                    />
+                  </label>
+                  <label>
+                    <span>Author</span>
+                    <input
+                      value={articleAuthorName}
+                      onChange={(event) => setArticleAuthorName(event.target.value)}
+                      placeholder="Publisher Desk"
+                    />
+                  </label>
+                  <label>
+                    <span>Access</span>
+                    <select
+                      value={articleAccessRule}
+                      onChange={(event) =>
+                        setArticleAccessRule(event.target.value as AccessRule)
+                      }
+                    >
+                      <option value="public">Public</option>
+                      <option value="subscriber_only">Subscriber only</option>
+                      <option value="staff_only">Staff only</option>
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  <span>Summary</span>
+                  <textarea
+                    value={articleSummary}
+                    onChange={(event) => setArticleSummary(event.target.value)}
+                    placeholder="Short reader-facing summary"
+                  />
+                </label>
+                <label>
+                  <span>Body</span>
+                  <textarea
+                    value={articleBody}
+                    onChange={(event) => setArticleBody(event.target.value)}
+                    placeholder="Paste or type the cleaned article text"
+                    rows={6}
+                  />
+                </label>
+                <label>
+                  <span>Discussion access</span>
+                  <select
+                    value={articleDiscussionRule}
+                    onChange={(event) =>
+                      setArticleDiscussionRule(event.target.value as DiscussionRule)
+                    }
+                  >
+                    <option value="logged_in">Logged-in readers</option>
+                    <option value="subscriber_only">Subscribers only</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="locked">Locked</option>
+                  </select>
+                </label>
+                <button disabled={articleCreateStatus === "saving"}>
+                  <Sparkles size={18} />
+                  {articleCreateStatus === "saving"
+                    ? "Creating article..."
+                    : "Create article block"}
+                </button>
+                {articleCreateMessage && (
+                  <p className={`action-feedback ${articleCreateStatus}`}>
+                    {articleCreateMessage}
+                  </p>
+                )}
+              </form>
             </div>
           )}
         </section>

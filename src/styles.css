@@ -147,7 +147,8 @@ a {
 .comment-composer button,
 .admin-hero button,
 .admin-action,
-.edition-form button {
+.edition-form button,
+.article-block-form button {
   color: #fff;
   background: #165a4c;
 }
@@ -702,6 +703,39 @@ main {
   background: #fff7df;
 }
 
+.source-asset-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid rgba(22, 90, 76, 0.18);
+  border-radius: 8px;
+  background: #edf6f0;
+}
+
+.source-asset-card strong {
+  color: #21332d;
+}
+
+.source-asset-card p {
+  margin: 0;
+  color: #5f6a64;
+  line-height: 1.45;
+}
+
+.source-asset-card a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  width: fit-content;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #fff;
+  background: #165a4c;
+  font-weight: 800;
+}
+
 .locked-panel {
   display: flex;
   align-items: flex-start;
@@ -739,6 +773,36 @@ main {
 .viewer-toolbar h1 {
   margin: 4px 0 0;
   font-size: clamp(1.7rem, 4vw, 3.2rem);
+}
+
+.source-asset-reader {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.source-asset-reader strong {
+  display: block;
+  margin-top: 3px;
+}
+
+.source-asset-reader iframe,
+.source-asset-reader img {
+  width: 100%;
+  min-height: 520px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 8px;
+  background: #f5f4ef;
+}
+
+.source-asset-reader img {
+  min-height: 0;
+  max-height: 760px;
+  object-fit: contain;
 }
 
 .paper-stage {
@@ -1111,7 +1175,8 @@ main {
   gap: 18px;
 }
 
-.edition-form {
+.edition-form,
+.article-block-form {
   display: grid;
   gap: 14px;
 }
@@ -1122,7 +1187,8 @@ main {
   gap: 12px;
 }
 
-.edition-form label {
+.edition-form label,
+.article-block-form label {
   display: grid;
   gap: 7px;
   color: #3c4843;
@@ -1130,7 +1196,10 @@ main {
 }
 
 .edition-form input,
-.edition-form select {
+.edition-form select,
+.article-block-form input,
+.article-block-form select,
+.article-block-form textarea {
   width: 100%;
   min-height: 42px;
   border: 1px solid rgba(43, 59, 52, 0.14);
@@ -1140,12 +1209,33 @@ main {
   background: #fffdf8;
 }
 
+.article-block-form textarea {
+  min-height: 96px;
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 .edition-form input[type="file"] {
   padding: 10px;
 }
 
-.edition-form button {
+.edition-form button,
+.article-block-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 14px;
   justify-self: start;
+}
+
+.article-block-form {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(43, 59, 52, 0.12);
 }
 
 .strategy-panel {
