@@ -25,6 +25,8 @@ export type AccountStatus = "active" | "suspended" | "pending";
 
 export type SubscriptionStatus = "active" | "trialing" | "past_due" | "expired" | "canceled";
 
+export type PublisherInviteStatus = "pending" | "accepted" | "revoked";
+
 export interface Publisher {
   id: string;
   name: string;
@@ -177,4 +179,14 @@ export interface PublisherStaffMembership {
     "agency_admin" | "publisher_admin" | "editor" | "columnist" | "moderator"
   >;
   status: AccountStatus;
+}
+
+export interface PublisherStaffInvite {
+  id: string;
+  email: string;
+  name: string;
+  publisherId: string;
+  role: PublisherStaffMembership["role"];
+  status: PublisherInviteStatus;
+  createdBy: string;
 }

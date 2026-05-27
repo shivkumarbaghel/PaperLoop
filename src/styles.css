@@ -116,6 +116,7 @@ a {
 }
 
 .main-nav button,
+.login-submit,
 .login-button,
 .icon-button,
 .hero-actions button,
@@ -160,25 +161,58 @@ a {
 
 .login-form {
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+  box-shadow: 0 12px 36px rgba(31, 40, 36, 0.08);
 }
 
 .login-form input {
-  width: 145px;
-  min-height: 40px;
-  border: 1px solid rgba(43, 59, 52, 0.14);
-  border-radius: 8px;
-  padding: 0 10px;
+  width: 128px;
+  min-height: 38px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 6px;
+  padding: 0 11px;
   color: #21332d;
-  background: #fffdf8;
+  background: #faf9f4;
+  outline: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background 160ms ease;
 }
 
-.login-form button {
+.login-form input:focus {
+  border-color: rgba(22, 90, 76, 0.5);
+  background: #fffdf8;
+  box-shadow: 0 0 0 3px rgba(22, 90, 76, 0.12);
+}
+
+.login-submit {
   color: #fff;
   background: #165a4c;
+  border-color: #165a4c;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(22, 90, 76, 0.24);
+}
+
+.login-submit:hover:not(:disabled) {
+  background: #11483d;
+  transform: translateY(-1px);
+}
+
+.google-login {
+  color: #165a4c;
+  background: #edf6f0;
+  border-color: rgba(22, 90, 76, 0.18);
+}
+
+.google-login:hover:not(:disabled) {
+  background: #e1f0e8;
 }
 
 .user-chip {
@@ -1063,6 +1097,51 @@ main {
   margin-top: 4px;
 }
 
+.access-directory {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.access-directory h3 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.staff-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(43, 59, 52, 0.1);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.staff-card + .staff-card {
+  margin-top: 10px;
+}
+
+.staff-card span,
+.staff-card small {
+  display: block;
+  margin-top: 4px;
+  color: #69746f;
+}
+
+.invite-card code {
+  display: block;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  color: #174c42;
+  background: #edf6f0;
+  font-size: 0.78rem;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .insight-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1111,11 +1190,18 @@ main {
     justify-content: flex-start;
   }
 
+  .login-form {
+    width: fit-content;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .hero-panel,
   .reader-layout,
   .article-panel,
   .article-side-grid,
   .form-grid,
+  .access-directory,
   .admin-grid {
     grid-template-columns: 1fr;
   }
@@ -1148,6 +1234,26 @@ main {
 
   .main-nav {
     overflow-x: auto;
+  }
+
+  .account-area,
+  .login-form {
+    width: 100%;
+  }
+
+  .login-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .login-form label,
+  .login-form input {
+    width: 100%;
+  }
+
+  .login-submit,
+  .google-login {
+    min-height: 42px;
   }
 
   .hero-panel {

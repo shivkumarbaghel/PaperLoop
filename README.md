@@ -65,6 +65,7 @@ Verified on 2026-05-27:
 - The default Firebase Storage bucket exists: `paperloop-2e121.firebasestorage.app` in `ASIA-SOUTH1`.
 - Firebase Authentication is initialized with Google and Email/Password sign-in enabled.
 - The Nepro admin account is bootstrapped as a `super_admin` with Storage upload claims.
+- The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
 
 ### Required Firebase Setup
 
@@ -113,6 +114,22 @@ Verified on 2026-05-27:
    ```
 
 Google login creates a locked-down `reader` profile by default. Publisher workspace access requires either a platform role on `users/{uid}` or an active `publisherStaff/{publisherId}_{uid}` document. Storage upload authorization uses Firebase Auth custom claims seeded by `npm run seed:firestore` when the matching Auth user already exists. Subscriber-only article discussions require an active `subscriptions/{uid}_{publisherId}` document or staff access.
+
+### Grant Publisher Staff Access
+
+The Admin screen can record a pending publisher staff invite, but Firebase Auth custom claims must be applied with the local service-account script:
+
+```bash
+npm run grant:access -- --email staff@example.com --publisher narmada-times --role publisher_admin --name "Staff Name"
+```
+
+If the Firebase Auth user does not exist yet, create an Email/Password test user in the same command:
+
+```bash
+npm run grant:access -- --email staff@example.com --publisher narmada-times --role editor --name "Staff Name" --password "Temporary-Password-123!"
+```
+
+Supported staff roles are `agency_admin`, `publisher_admin`, `editor`, `moderator`, and `columnist`.
 
 ### Firebase Troubleshooting
 

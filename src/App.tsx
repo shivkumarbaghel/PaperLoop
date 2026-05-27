@@ -67,6 +67,11 @@ import {
   type EngagementType,
 } from "./services/engagementRepository";
 import {
+  createPublisherStaffInvite,
+  getPublisherStaffDirectory,
+  getPublisherStaffInvites,
+} from "./services/accessManagementRepository";
+import {
   createEditionDraft,
   getPublisherWorkspaceEditions,
 } from "./services/publisherWorkspaceRepository";
@@ -84,6 +89,8 @@ import type {
   Edition,
   MetricCard,
   Publisher,
+  PublisherStaffInvite,
+  PublisherStaffMembership,
   UserProfile,
 } from "./types";
 
@@ -92,6 +99,13 @@ type View = "dashboard" | "reader" | "article" | "admin";
 const languages = ["All", "Hindi"];
 const regions = ["All", "Madhya Pradesh", "Delhi NCR", "Maharashtra", "Uttar Pradesh"];
 const topics = ["All", "Local", "Politics", "Business", "Education", "Culture"];
+const staffRoles: PublisherStaffMembership["role"][] = [
+  "agency_admin",
+  "publisher_admin",
+  "editor",
+  "moderator",
+  "columnist",
+];
 
 function App() {
   const [activeView, setActiveView] = useState<View>("dashboard");
@@ -492,12 +506,12 @@ function Header({
                 autoComplete="current-password"
               />
             </label>
-            <button disabled={authPending}>
+            <button className="login-submit" disabled={authPending}>
               <UserRound size={18} />
               {authPending ? "Signing in..." : "Sign in"}
             </button>
             <button
-              className="login-button"
+              className="login-button google-login"
               type="button"
               onClick={onSignIn}
               disabled={authPending}
@@ -1141,6 +1155,23 @@ function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function formatRole(value: string) {
+  return value
+    .split("_")
+    .map((part) => capitalize(part))
+    .join(" ");
+}
+
+function publisherName(publishers: Publisher[], publisherId: string) {
+  return (
+    publishers.find((publisher) => publisher.id === publisherId)?.name ?? publisherId
+  );
+}
+
+function grantAccessCommand(invite: PublisherStaffInvite) {
+  return `npm run grant:access -- --email ${invite.email} --publisher ${invite.publisherId} --role ${invite.role} --name "${invite.name}"`;
+}
+
 interface AdminViewProps {
   authUser: User | null;
   campaigns: Campaign[];
@@ -1193,6 +1224,26 @@ function AdminView({
   const [workspaceStatus, setWorkspaceStatus] = useState<
     "loading" | "ready" | "error"
   >("loading");
+  const [staffDirectory, setStaffDirectory] = useState<PublisherStaffMembership[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PublisherStaffInvite[]>([]);
+  const [accessStatus, setAccessStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [invitePublisherId, setInvitePublisherId] = useState(
+    fallbackPublisher?.id ?? "",
+  );
+  const selectedInvitePublisher =
+    accessiblePublishers.find((publisher) => publisher.id === invitePublisherId) ??
+    fallbackPublisher;
+  const selectedInvitePublisherId = selectedInvitePublisher?.id ?? "";
+  const [inviteName, setInviteName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] =
+    useState<PublisherStaffMembership["role"]>("publisher_admin");
+  const [inviteStatus, setInviteStatus] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [inviteMessage, setInviteMessage] = useState("");
   const [uploadStatus, setUploadStatus] = useState<
     "idle" | "uploading" | "success" | "error"
   >("idle");
@@ -1221,6 +1272,37 @@ function AdminView({
 
         setWorkspaceEditions([]);
         setWorkspaceStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [workspacePublisherIds]);
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all([
+      getPublisherStaffDirectory(workspacePublisherIds),
+      getPublisherStaffInvites(workspacePublisherIds),
+    ])
+      .then(([nextStaffDirectory, nextPendingInvites]) => {
+        if (!active) {
+          return;
+        }
+
+        setStaffDirectory(nextStaffDirectory);
+        setPendingInvites(nextPendingInvites);
+        setAccessStatus("ready");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        setStaffDirectory([]);
+        setPendingInvites([]);
+        setAccessStatus("error");
       });
 
     return () => {
@@ -1272,6 +1354,47 @@ function AdminView({
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setSourceFile(event.target.files?.[0] ?? null);
+  }
+
+  async function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser || !canManagePlatform(profile)) {
+      setInviteStatus("error");
+      setInviteMessage("Only a platform super admin can create agency access invites.");
+      return;
+    }
+
+    setInviteStatus("saving");
+    setInviteMessage("");
+
+    try {
+      const nextInvite = await createPublisherStaffInvite(
+        {
+          email: inviteEmail,
+          name: inviteName,
+          publisherId: selectedInvitePublisherId,
+          role: inviteRole,
+        },
+        authUser,
+      );
+
+      setPendingInvites((currentInvites) => [
+        nextInvite,
+        ...currentInvites.filter((invite) => invite.id !== nextInvite.id),
+      ]);
+      setInviteName("");
+      setInviteEmail("");
+      setInviteStatus("success");
+      setInviteMessage(
+        "Invite recorded. Run the grant command after the user exists in Firebase Auth.",
+      );
+    } catch (error) {
+      setInviteStatus("error");
+      setInviteMessage(
+        error instanceof Error ? error.message : "Unable to create access invite.",
+      );
+    }
   }
 
   if (!canOpenAdminWorkspace(profile, userAccess)) {
@@ -1416,6 +1539,114 @@ function AdminView({
             </form>
           )}
         </section>
+
+        {canManagePlatform(profile) && (
+          <section className="workspace-panel">
+            <div className="section-heading compact">
+              <span className="eyebrow">Super admin access</span>
+              <h2>Agency staff invites</h2>
+            </div>
+            <form className="edition-form" onSubmit={handleInviteSubmit}>
+              <div className="form-grid">
+                <label>
+                  <span>Publisher</span>
+                  <select
+                    value={selectedInvitePublisherId}
+                    onChange={(event) => setInvitePublisherId(event.target.value)}
+                  >
+                    {accessiblePublishers.map((publisher) => (
+                      <option key={publisher.id} value={publisher.id}>
+                        {publisher.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select
+                    value={inviteRole}
+                    onChange={(event) =>
+                      setInviteRole(
+                        event.target.value as PublisherStaffMembership["role"],
+                      )
+                    }
+                  >
+                    {staffRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {formatRole(role)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Staff name</span>
+                  <input
+                    value={inviteName}
+                    onChange={(event) => setInviteName(event.target.value)}
+                    placeholder="Agency admin name"
+                  />
+                </label>
+                <label>
+                  <span>Staff email</span>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="staff@example.com"
+                  />
+                </label>
+              </div>
+              <button disabled={inviteStatus === "saving"}>
+                <Users size={18} />
+                {inviteStatus === "saving" ? "Saving invite..." : "Record access invite"}
+              </button>
+              {inviteMessage && (
+                <p className={`action-feedback ${inviteStatus}`}>{inviteMessage}</p>
+              )}
+            </form>
+            <div className="access-directory">
+              <div>
+                <h3>Active staff</h3>
+                {accessStatus === "error" && (
+                  <p className="empty-state">Unable to load staff access records.</p>
+                )}
+                {staffDirectory.length === 0 && accessStatus !== "error" ? (
+                  <p className="empty-state">No active staff records yet.</p>
+                ) : (
+                  staffDirectory.slice(0, 5).map((member) => (
+                    <article className="staff-card" key={member.id}>
+                      <div>
+                        <strong>{formatRole(member.role)}</strong>
+                        <span>{publisherName(publishers, member.publisherId)}</span>
+                      </div>
+                      <small>{member.status}</small>
+                    </article>
+                  ))
+                )}
+              </div>
+              <div>
+                <h3>Pending invites</h3>
+                {pendingInvites.length === 0 ? (
+                  <p className="empty-state">No pending agency invites.</p>
+                ) : (
+                  pendingInvites.slice(0, 4).map((invite) => (
+                    <article className="staff-card invite-card" key={invite.id}>
+                      <div>
+                        <strong>{invite.name}</strong>
+                        <span>
+                          {invite.email} • {formatRole(invite.role)} •{" "}
+                          {publisherName(publishers, invite.publisherId)}
+                        </span>
+                        <code>{grantAccessCommand(invite)}</code>
+                      </div>
+                      <small>{invite.status}</small>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
         <section className="workspace-panel">
           <div className="section-heading compact">

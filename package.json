@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
+    "grant:access": "tsx scripts/grantPublisherAccess.ts",
     "seed:firestore": "tsx scripts/seedFirestore.ts"
   },
   "dependencies": {

@@ -70,10 +70,6 @@ service cloud.firestore {
         );
     }
 
-    function immutableUserKeys() {
-      return ["id", "role", "status", "createdAt"];
-    }
-
     function safeUserCreate(userId) {
       return request.resource.data.keys().hasOnly([
         "id",
@@ -101,8 +97,7 @@ service cloud.firestore {
         "languagePreference",
         "updatedAt"
       ])
-      && request.resource.data.provider in ["google", "password"]
-      && request.resource.data.diff(resource.data).affectedKeys().hasNone(immutableUserKeys());
+      && request.resource.data.provider in ["google", "password"];
     }
 
     match /users/{userId} {
@@ -165,6 +160,22 @@ service cloud.firestore {
       allow read: if signedIn()
         && (request.auth.uid == resource.data.userId || canManagePublisher(resource.data.publisherId));
       allow write: if isPlatformAdmin();
+    }
+
+    match /publisherInvites/{inviteId} {
+      allow read: if signedIn()
+        && (isPlatformAdmin() || canManagePublisher(resource.data.publisherId));
+      allow create: if isPlatformAdmin()
+        && request.resource.data.publisherId is string
+        && request.resource.data.email is string
+        && request.resource.data.name is string
+        && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"]
+        && request.resource.data.status == "pending";
+      allow update: if isPlatformAdmin()
+        && request.resource.data.publisherId == resource.data.publisherId
+        && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"]
+        && request.resource.data.status in ["pending", "accepted", "revoked"];
+      allow delete: if isPlatformAdmin();
     }
 
     match /metrics/{metricId} {
