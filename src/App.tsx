@@ -74,6 +74,7 @@ import {
 import {
   createEditionDraft,
   getPublisherWorkspaceEditions,
+  updateEditionWorkflowStatus,
 } from "./services/publisherWorkspaceRepository";
 import {
   emptyUserAccess,
@@ -87,6 +88,7 @@ import type {
   Campaign,
   Comment,
   Edition,
+  EditionStatus,
   MetricCard,
   Publisher,
   PublisherStaffInvite,
@@ -1172,6 +1174,20 @@ function grantAccessCommand(invite: PublisherStaffInvite) {
   return `npm run grant:access -- --email ${invite.email} --publisher ${invite.publisherId} --role ${invite.role} --name "${invite.name}"`;
 }
 
+function upsertEdition(editions: Edition[], nextEdition: Edition) {
+  const existingEditionIndex = editions.findIndex(
+    (edition) => edition.id === nextEdition.id,
+  );
+
+  if (existingEditionIndex === -1) {
+    return [nextEdition, ...editions];
+  }
+
+  return editions.map((edition) =>
+    edition.id === nextEdition.id ? nextEdition : edition,
+  );
+}
+
 interface AdminViewProps {
   authUser: User | null;
   campaigns: Campaign[];
@@ -1248,9 +1264,24 @@ function AdminView({
     "idle" | "uploading" | "success" | "error"
   >("idle");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [workflowEditionId, setWorkflowEditionId] = useState("");
+  const [workflowStatus, setWorkflowStatus] = useState<"success" | "error">(
+    "success",
+  );
+  const [workflowMessage, setWorkflowMessage] = useState("");
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
+  );
+  const reviewQueue = useMemo(
+    () =>
+      [...createdDrafts, ...workspaceEditions, ...editions.filter((edition) => edition.status !== "published")]
+        .filter(
+          (edition, index, editionList) =>
+            editionList.findIndex((item) => item.id === edition.id) === index,
+        )
+        .slice(0, 8),
+    [createdDrafts, editions, workspaceEditions],
   );
 
   useEffect(() => {
@@ -1394,6 +1425,57 @@ function AdminView({
       setInviteMessage(
         error instanceof Error ? error.message : "Unable to create access invite.",
       );
+    }
+  }
+
+  async function handleEditionStatusChange(
+    edition: Edition,
+    nextStatus: Extract<EditionStatus, "review" | "published" | "archived">,
+  ) {
+    if (!authUser) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("Sign in before updating edition status.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, edition.publisherId)) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("This account cannot manage that publisher.");
+      return;
+    }
+
+    setWorkflowEditionId(edition.id);
+    setWorkflowStatus("success");
+    setWorkflowMessage("");
+
+    try {
+      const updatedEdition = await updateEditionWorkflowStatus(
+        edition,
+        nextStatus,
+        authUser,
+      );
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, updatedEdition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts
+          .map((draft) => (draft.id === updatedEdition.id ? updatedEdition : draft))
+          .filter((draft) => draft.status !== "published"),
+      );
+      setWorkflowStatus("success");
+      setWorkflowMessage(
+        nextStatus === "published"
+          ? "Edition published and visible to eligible readers."
+          : "Edition moved back to review.",
+      );
+    } catch (error) {
+      setWorkflowStatus("error");
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Unable to update edition status.",
+      );
+    } finally {
+      setWorkflowEditionId("");
     }
   }
 
@@ -1650,22 +1732,22 @@ function AdminView({
 
         <section className="workspace-panel">
           <div className="section-heading compact">
-            <span className="eyebrow">Upload workflow</span>
+            <span className="eyebrow">Review workflow</span>
             <h2>Issue processing</h2>
           </div>
           <div className="timeline">
             {[
               "Edition metadata captured",
               "PDF/page images uploaded",
-              "Pages generated for review",
+              "Staff review queue",
+              "Edition published",
               "Article hotspots clipped",
               "OCR text corrected",
-              "Edition ready to publish",
             ].map((step, index) => (
               <div className="timeline-step" key={step}>
                 <CheckCircle2 size={18} />
                 <span>{step}</span>
-                <small>{index < 3 ? "Done" : "Next"}</small>
+                <small>{index < 4 ? "Done" : "Next"}</small>
               </div>
             ))}
           </div>
@@ -1706,36 +1788,63 @@ function AdminView({
 
         <section className="workspace-panel strategy-panel">
           <div className="section-heading compact">
-            <span className="eyebrow">Edition drafts</span>
-            <h2>Recent workspace records</h2>
+            <span className="eyebrow">Edition review</span>
+            <h2>Review and publish queue</h2>
           </div>
           <div className="draft-list">
             {workspaceStatus === "error" && (
               <p className="empty-state">Unable to load workspace editions.</p>
             )}
-            {[...createdDrafts, ...workspaceEditions, ...editions.filter((edition) => edition.status !== "published")]
-              .filter(
-                (edition, index, editionList) =>
-                  editionList.findIndex((item) => item.id === edition.id) === index,
-              )
-              .slice(0, 6)
-              .map((edition) => (
+            {reviewQueue.map((edition) => {
+              const canManageEdition = canManagePublisher(
+                profile,
+                userAccess,
+                edition.publisherId,
+              );
+              const isUpdating = workflowEditionId === edition.id;
+
+              return (
                 <article className="draft-card" key={edition.id}>
                   <div>
                     <strong>{edition.title}</strong>
                     <span>
-                      {edition.city} • {edition.date} • {edition.status}
+                      {edition.city} • {edition.date} • {formatRole(edition.status)}
                     </span>
+                    <small>{edition.sourceAssetName ?? "Metadata only"}</small>
                   </div>
-                  <small>{edition.sourceAssetName ?? "Metadata only"}</small>
+                  <div className="draft-actions">
+                    {edition.sourceAssetUrl && (
+                      <a href={edition.sourceAssetUrl} target="_blank" rel="noreferrer">
+                        Source
+                      </a>
+                    )}
+                    {edition.status === "published" ? (
+                      <button
+                        type="button"
+                        disabled={!canManageEdition || isUpdating}
+                        onClick={() => handleEditionStatusChange(edition, "review")}
+                      >
+                        Send to review
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!canManageEdition || isUpdating}
+                        onClick={() => handleEditionStatusChange(edition, "published")}
+                      >
+                        {isUpdating ? "Publishing..." : "Publish"}
+                      </button>
+                    )}
+                  </div>
                 </article>
-              ))}
-            {createdDrafts.length === 0 &&
-              workspaceEditions.length === 0 &&
-              editions.filter((edition) => edition.status !== "published").length === 0 &&
-              workspaceStatus !== "error" && (
+              );
+            })}
+            {reviewQueue.length === 0 && workspaceStatus !== "error" && (
                 <p className="empty-state">No draft editions uploaded yet.</p>
-              )}
+            )}
+            {workflowMessage && (
+              <p className={`action-feedback ${workflowStatus}`}>{workflowMessage}</p>
+            )}
           </div>
         </section>
       </div>

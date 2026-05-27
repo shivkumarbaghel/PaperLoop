@@ -1154,6 +1154,7 @@ main {
 .draft-card {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 12px;
   padding: 14px;
   border: 1px solid rgba(43, 59, 52, 0.1);
@@ -1166,6 +1167,33 @@ main {
   display: block;
   margin-top: 4px;
   color: #69746f;
+}
+
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.draft-actions a,
+.draft-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #165a4c;
+  background: #edf6f0;
+  border: 1px solid rgba(22, 90, 76, 0.16);
+  font-weight: 800;
+}
+
+.draft-actions button:last-child {
+  color: #fff;
+  background: #165a4c;
+  border-color: #165a4c;
 }
 
 .sr-only {
@@ -1301,9 +1329,19 @@ main {
 
   .viewer-toolbar,
   .admin-hero,
-  .byline-card {
+  .byline-card,
+  .draft-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .draft-actions {
+    justify-content: stretch;
+  }
+
+  .draft-actions a,
+  .draft-actions button {
+    flex: 1 1 auto;
   }
 
   .paper-stage {

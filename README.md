@@ -66,6 +66,7 @@ Verified on 2026-05-27:
 - Firebase Authentication is initialized with Google and Email/Password sign-in enabled.
 - The Nepro admin account is bootstrapped as a `super_admin` with Storage upload claims.
 - The admin workspace includes a super-admin invite panel for recording publisher staff access requests.
+- Publisher staff can move edition records between review and published states from the Admin workspace.
 
 ### Required Firebase Setup
 

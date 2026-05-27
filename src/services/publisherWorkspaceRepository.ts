@@ -6,11 +6,12 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
-import type { AccessRule, Edition } from "../types";
+import type { AccessRule, Edition, EditionStatus } from "../types";
 
 const maxUploadBytes = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -120,6 +121,44 @@ export async function getPublisherWorkspaceEditions(
       })) as Edition[],
     )
     .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export async function updateEditionWorkflowStatus(
+  edition: Edition,
+  nextStatus: Extract<EditionStatus, "review" | "published" | "archived">,
+  user: User,
+): Promise<Edition> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.publisherId || !edition.id) {
+    throw new Error("Edition record is missing publisher or edition id.");
+  }
+
+  const workflowFields =
+    nextStatus === "published"
+      ? {
+          publishedAt: serverTimestamp(),
+          publishedBy: user.uid,
+        }
+      : {
+          reviewedAt: serverTimestamp(),
+          reviewedBy: user.uid,
+        };
+
+  await updateDoc(doc(firebase.db, "editions", edition.id), {
+    status: nextStatus,
+    updatedAt: serverTimestamp(),
+    ...workflowFields,
+  });
+
+  return {
+    ...edition,
+    status: nextStatus,
+  };
 }
 
 function validateDraftInput(input: EditionDraftInput) {
