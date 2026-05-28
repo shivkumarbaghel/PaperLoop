@@ -78,6 +78,8 @@ interface ClipRegionInput {
   pageId: string;
   pageNumber: number;
   pageSection: string;
+  editionCity?: string;
+  editionState?: string;
   x: number;
   y: number;
   width: number;
@@ -91,6 +93,8 @@ interface ExtractedClipDetails {
   section: string;
   summary: string;
   body: string;
+  area: string;
+  tags: string[];
   confidence: number;
   previewDataUrl: string;
 }
@@ -138,6 +142,10 @@ export const extractClipRegionDetails = onCall(
       croppedWebp,
       pageSection,
       openAiApiKey.value(),
+      {
+        editionCity: input.editionCity?.trim() || "",
+        editionState: input.editionState?.trim() || "",
+      },
     );
 
     return {
@@ -765,13 +773,20 @@ async function extractDetailsFromCrop(
   croppedWebp: Buffer,
   pageSection: string,
   apiKey: string,
+  editionLocale: { editionCity: string; editionState: string } = {
+    editionCity: "",
+    editionState: "",
+  },
 ): Promise<Omit<ExtractedClipDetails, "previewDataUrl">> {
   if (!apiKey) {
-    return fallbackClipDetails(pageSection);
+    return fallbackClipDetails(pageSection, editionLocale);
   }
 
   const openai = new OpenAI({ apiKey });
   const dataUrl = `data:image/webp;base64,${croppedWebp.toString("base64")}`;
+  const localeHint = [editionLocale.editionCity, editionLocale.editionState]
+    .filter(Boolean)
+    .join(", ");
 
   try {
     const response = await openai.responses.create({
@@ -785,8 +800,14 @@ async function extractDetailsFromCrop(
               text: [
                 "Read this cropped Hindi/English newspaper clip.",
                 "Extract editorial metadata for a publisher workflow.",
-                "Return a concise hotspot label (3-6 words), headline title, section name, short summary, and brief OCR body text.",
+                "Return a concise hotspot label (3-6 words), headline title, section name, short summary, brief OCR body text,",
+                "a specific locality/area/neighborhood mentioned inside the clip (empty string if none),",
+                "and 2-5 topical tags.",
                 `Default section hint: ${pageSection}.`,
+                localeHint
+                  ? `Edition locale hint (city/state for context only): ${localeHint}.`
+                  : "No edition locale hint was provided.",
+                "Only put a value in area when the clip explicitly names a locality smaller than the edition city.",
               ].join(" "),
             },
             {
@@ -805,7 +826,17 @@ async function extractDetailsFromCrop(
           schema: {
             type: "object",
             additionalProperties: false,
-            required: ["type", "label", "title", "section", "summary", "body", "confidence"],
+            required: [
+              "type",
+              "label",
+              "title",
+              "section",
+              "summary",
+              "body",
+              "area",
+              "tags",
+              "confidence",
+            ],
             properties: {
               type: {
                 type: "string",
@@ -816,6 +847,12 @@ async function extractDetailsFromCrop(
               section: { type: "string" },
               summary: { type: "string" },
               body: { type: "string" },
+              area: { type: "string" },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+                maxItems: 8,
+              },
               confidence: { type: "number" },
             },
           },
@@ -836,6 +873,8 @@ async function extractDetailsFromCrop(
       body:
         parsed.body?.trim() ||
         "AI OCR draft from the selected clip. Editors should verify before publishing.",
+      area: parsed.area?.trim() || "",
+      tags: normalizeTags(parsed.tags),
       confidence: Math.max(0, Math.min(1, parsed.confidence ?? 0.65)),
     };
   } catch (error) {
@@ -844,11 +883,30 @@ async function extractDetailsFromCrop(
       error: error instanceof Error ? error.message : "unknown",
     });
 
-    return fallbackClipDetails(pageSection);
+    return fallbackClipDetails(pageSection, editionLocale);
   }
 }
 
-function fallbackClipDetails(pageSection: string): Omit<ExtractedClipDetails, "previewDataUrl"> {
+function normalizeTags(tags: unknown) {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+
+  return tags
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function fallbackClipDetails(
+  pageSection: string,
+  editionLocale: { editionCity: string; editionState: string },
+): Omit<ExtractedClipDetails, "previewDataUrl"> {
+  const tags = [pageSection, editionLocale.editionCity, editionLocale.editionState]
+    .map((value) => value.trim())
+    .filter(Boolean);
+
   return {
     type: "article",
     label: "Clip story",
@@ -856,6 +914,8 @@ function fallbackClipDetails(pageSection: string): Omit<ExtractedClipDetails, "p
     section: pageSection,
     summary: "Clip region saved. Add or correct extracted text before publishing.",
     body: "OCR draft will appear here after smart extraction. Review manually if needed.",
+    area: "",
+    tags: [...new Set(tags)].slice(0, 5),
     confidence: 0.45,
   };
 }

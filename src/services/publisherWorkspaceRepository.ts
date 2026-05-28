@@ -117,6 +117,10 @@ export interface ArticleBlockInput {
   section: string;
   summary: string;
   body: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  tags?: string[];
   authorName: string;
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
@@ -133,6 +137,10 @@ export interface ArticlePostUpdateInput {
   section: string;
   summary: string;
   body: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  tags?: string[];
   authorName: string;
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
@@ -158,6 +166,10 @@ export interface ArticleBlockDraftInput {
   section: string;
   summary: string;
   body: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  tags?: string[];
   x: number;
   y: number;
   width: number;
@@ -171,6 +183,8 @@ export interface ClipRegionExtractionInput {
   pageId: string;
   pageNumber: number;
   pageSection: string;
+  editionCity?: string;
+  editionState?: string;
   x: number;
   y: number;
   width: number;
@@ -184,6 +198,8 @@ export interface ClipRegionExtraction {
   section: string;
   summary: string;
   body: string;
+  area: string;
+  tags: string[];
   confidence: number;
   previewDataUrl?: string;
 }
@@ -725,6 +741,8 @@ export async function saveArticleBlockDraft(
 
   validateBlockInput(input);
 
+  const locale = normalizeArticleLocaleFields({}, input);
+
   const blockRef = input.blockId
     ? doc(firebase.db, "articleBlocks", input.blockId)
     : doc(collection(firebase.db, "articleBlocks"));
@@ -738,10 +756,11 @@ export async function saveArticleBlockDraft(
     status: input.status,
     source: input.source,
     label: input.label.trim(),
-    title: input.title.trim(),
-    section: input.section.trim(),
-    summary: input.summary.trim(),
-    body: input.body.trim(),
+    title: (input.title ?? "").trim(),
+    section: (input.section ?? "").trim(),
+    summary: (input.summary ?? "").trim(),
+    body: (input.body ?? "").trim(),
+    ...locale,
     ...normalizeGeometry({
       x: input.x,
       y: input.y,
@@ -1021,6 +1040,14 @@ export async function createArticleBlockFromPreviewPage(
 
   const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
   const articleId = createArticleId(edition, input);
+  const locale = normalizeArticleLocaleFields(
+    {
+      city: edition.city,
+      state: edition.state,
+    },
+    input,
+    sourceBlock ?? undefined,
+  );
   const blockGeometry = normalizeGeometry({
     x: sourceBlock?.x ?? input.x ?? (page.hotspots.length % 2 === 0 ? 8 : 55),
     y: sourceBlock?.y ?? input.y ?? 18 + page.hotspots.length * 10,
@@ -1063,11 +1090,12 @@ export async function createArticleBlockFromPreviewPage(
     status: "published",
     title: input.title.trim(),
     section: input.section.trim(),
+    ...locale,
     author: {
       id: slugify(input.authorName),
       name: input.authorName.trim(),
       publication: edition.title,
-      topics: [input.section.trim()],
+      topics: locale.tags.length ? locale.tags : [input.section.trim()],
       bio: "Publisher staff article created from a PaperLoop preview page.",
       verified: true,
       followers: 0,
@@ -1109,6 +1137,10 @@ export async function createArticleBlockFromPreviewPage(
           articlePostId: articleId,
           clippedImageUrl: clippedAsset?.url,
           clippedImagePath: clippedAsset?.path,
+          city: locale.city,
+          state: locale.state,
+          area: locale.area,
+          tags: locale.tags,
           status: "published",
           updatedAt: serverTimestamp(),
         })
@@ -1182,6 +1214,15 @@ export async function updatePublisherArticlePost(
     width: input.width,
     height: input.height,
   });
+  const locale = normalizeArticleLocaleFields(
+    {
+      city: edition.city,
+      state: edition.state,
+    },
+    input,
+    sourceBlock ?? undefined,
+    existingArticle,
+  );
   const geometryChanged =
     JSON.stringify(existingArticle.blockGeometry ?? null) !== JSON.stringify(blockGeometry);
   const shouldRegenerateClip = input.regenerateClipImage || geometryChanged;
@@ -1220,6 +1261,7 @@ export async function updatePublisherArticlePost(
     section: input.section.trim(),
     summary: input.summary.trim(),
     body: input.body.trim(),
+    ...locale,
     clippedImageTone: slugify(input.section) || existingArticle.clippedImageTone,
     clippedImageUrl: clippedAsset?.url ?? existingArticle.clippedImageUrl,
     clippedImagePath: clippedAsset?.path ?? existingArticle.clippedImagePath,
@@ -1229,7 +1271,7 @@ export async function updatePublisherArticlePost(
     author: {
       ...existingArticle.author,
       name: input.authorName.trim() || existingArticle.author.name,
-      topics: [input.section.trim()],
+      topics: locale.tags.length ? locale.tags : [input.section.trim()],
     },
   };
   const blockUpdates =
@@ -1240,6 +1282,10 @@ export async function updatePublisherArticlePost(
           section: input.section.trim(),
           summary: input.summary.trim(),
           body: input.body.trim(),
+          city: locale.city,
+          state: locale.state,
+          area: locale.area,
+          tags: locale.tags,
           ...blockGeometry,
           clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
           clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
@@ -1253,6 +1299,10 @@ export async function updatePublisherArticlePost(
       section: updatedArticle.section,
       summary: updatedArticle.summary,
       body: updatedArticle.body,
+      city: updatedArticle.city,
+      state: updatedArticle.state,
+      area: updatedArticle.area,
+      tags: updatedArticle.tags,
       clippedImageTone: updatedArticle.clippedImageTone,
       clippedImageUrl: updatedArticle.clippedImageUrl,
       clippedImagePath: updatedArticle.clippedImagePath,
@@ -1669,6 +1719,55 @@ function validateArticleBlockInput(input: ArticleBlockInput) {
   ) {
     throw new Error("Page and author are required.");
   }
+}
+
+function normalizeArticleLocaleFields(
+  defaults: { city?: string; state?: string },
+  input: {
+    city?: string;
+    state?: string;
+    area?: string;
+    tags?: string[];
+    section?: string;
+  },
+  block?: Pick<ArticleBlock, "city" | "state" | "area" | "tags" | "section">,
+  article?: Pick<ArticlePost, "city" | "state" | "area" | "tags" | "section">,
+) {
+  const tags = normalizeTags(
+    input.tags ?? block?.tags ?? article?.tags ?? [input.section ?? block?.section ?? ""],
+  );
+
+  return {
+    city: pickLocaleField(input.city, block?.city, article?.city, defaults.city),
+    state: pickLocaleField(input.state, block?.state, article?.state, defaults.state),
+    area: pickLocaleField(input.area, block?.area, article?.area),
+    tags,
+  };
+}
+
+function pickLocaleField(...candidates: (string | undefined)[]) {
+  for (const candidate of candidates) {
+    const value = candidate?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function normalizeTags(tags: unknown) {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+
+  return [...new Set(
+    tags
+      .filter((tag): tag is string => typeof tag === "string")
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  )].slice(0, 8);
 }
 
 function createEditionId(input: EditionDraftInput, timestamp: string) {

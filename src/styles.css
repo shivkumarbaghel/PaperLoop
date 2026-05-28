@@ -2326,6 +2326,14 @@ main:has(.admin-layout) {
   line-height: 1.45;
 }
 
+.clip-locale-hint {
+  margin: 0;
+  color: #69746f;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .clip-extract-status {
   margin: 0;
   padding: 8px 10px;
@@ -2407,7 +2415,117 @@ main:has(.admin-layout) {
 }
 
 .clip-post-editor .published-post-links {
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.clip-detail-form {
+  gap: 14px;
+}
+
+.clip-detail-form-section {
+  padding: 16px;
+  border: 1px solid rgba(43, 59, 52, 0.16);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(38, 48, 43, 0.05);
+}
+
+.clip-post-editor .clip-detail-form-section.clip-image-upload {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  border-bottom: none;
+}
+
+.clip-post-editor .clip-detail-form .clip-image-upload label span {
+  text-transform: uppercase;
+}
+
+.clip-detail-form label span,
+.clip-post-editor .clip-detail-form-section label span {
+  color: #2b3b34;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.clip-detail-form input,
+.clip-detail-form select,
+.clip-detail-form textarea,
+.clip-post-editor .clip-detail-form-section input,
+.clip-post-editor .clip-detail-form-section select,
+.clip-post-editor .clip-detail-form-section textarea {
+  background: #fff;
+  border-color: rgba(43, 59, 52, 0.24);
+  box-shadow: inset 0 1px 2px rgba(38, 48, 43, 0.05);
+}
+
+.clip-detail-form input:focus,
+.clip-detail-form select:focus,
+.clip-detail-form textarea:focus,
+.clip-post-editor .clip-detail-form-section input:focus,
+.clip-post-editor .clip-detail-form-section select:focus,
+.clip-post-editor .clip-detail-form-section textarea:focus {
+  outline: none;
+  border-color: rgba(22, 90, 76, 0.5);
+  box-shadow: 0 0 0 3px rgba(22, 90, 76, 0.12);
+}
+
+.clip-detail-form .clip-locale-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #eef3f0;
+  color: #4a5751;
+}
+
+.clip-detail-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding-top: 4px;
+}
+
+.clip-detail-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.clip-detail-form-actions button {
+  width: auto;
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.clip-detail-form-actions .secondary-action {
+  color: #165a4c;
+  background: #fff;
+  border: 1px solid rgba(22, 90, 76, 0.28);
+}
+
+.clip-post-editor .clip-image-upload-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 0.8rem;
+  width: auto;
+}
+
+.clip-post-editor .clip-detail-form-section.clip-image-upload input[type="file"] {
+  background: #fff;
+  border-color: rgba(43, 59, 52, 0.24);
+  box-shadow: inset 0 1px 2px rgba(38, 48, 43, 0.05);
 }
 
 .clip-image-upload {
@@ -3135,6 +3253,35 @@ main:has(.admin-layout) {
   gap: 4px;
   padding: 10px;
   text-align: left;
+}
+
+.clip-list-row.clip-status-published > button:first-child {
+  background: #edf6f0;
+  border-color: rgba(22, 90, 76, 0.24);
+}
+
+.clip-list-row.clip-status-draft > button:first-child {
+  background: #fff8eb;
+  border-color: rgba(176, 118, 18, 0.24);
+}
+
+.clip-list-row.clip-status-suggested > button:first-child {
+  background: #f3f6fc;
+  border-color: rgba(58, 88, 168, 0.2);
+}
+
+.clip-list-row.clip-status-rejected > button:first-child {
+  background: #f7f7f7;
+  border-color: rgba(43, 59, 52, 0.12);
+  opacity: 0.78;
+}
+
+.clip-list-row.clip-status-published small {
+  color: #165a4c;
+}
+
+.clip-list-row.clip-status-draft small {
+  color: #9a6b12;
 }
 
 .clip-list-row.active > button:first-child,

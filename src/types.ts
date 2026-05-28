@@ -105,6 +105,10 @@ export interface ArticlePost {
   status: EditionStatus;
   title: string;
   section: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  tags?: string[];
   author: Columnist;
   summary: string;
   body: string;
@@ -217,6 +221,10 @@ export interface ArticleBlock {
   section: string;
   summary: string;
   body: string;
+  city?: string;
+  state?: string;
+  area?: string;
+  tags?: string[];
   x: number;
   y: number;
   width: number;
