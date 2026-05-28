@@ -82,6 +82,7 @@ import {
   createArticleBlockFromPreviewPage,
   createEditionDraft,
   generateEditionPreviewPages,
+  getEditionLanguages,
   getEditionLocations,
   getPublisherArticlePostDetail,
   getPublisherArticleBlocks,
@@ -100,6 +101,10 @@ import {
   editionLocations as fallbackEditionLocations,
   type EditionLocation,
 } from "./data/locationData";
+import {
+  editionLanguages as fallbackEditionLanguages,
+  type EditionLanguage,
+} from "./data/languageData";
 import {
   emptyUserAccess,
   getUserAccess,
@@ -2015,6 +2020,9 @@ function AdminView({
   const [editionLocations, setEditionLocations] = useState<EditionLocation[]>(
     fallbackEditionLocations,
   );
+  const [editionLanguages, setEditionLanguages] = useState<EditionLanguage[]>(
+    fallbackEditionLanguages,
+  );
   const [draftState, setDraftState] = useState(fallbackLocation?.state ?? "");
   const [draftCity, setDraftCity] = useState(fallbackPublisher?.city ?? "");
   const [draftLanguage, setDraftLanguage] = useState(
@@ -2116,6 +2124,13 @@ function AdminView({
   const selectedDraftCity = draftCityOptions.includes(draftCity)
     ? draftCity
     : draftCityOptions[0] ?? draftCity;
+  const draftLanguageOptions = useMemo(
+    () => editionLanguages.map((languageOption) => languageOption.name),
+    [editionLanguages],
+  );
+  const selectedDraftLanguage = draftLanguageOptions.includes(draftLanguage)
+    ? draftLanguage
+    : draftLanguageOptions[0] ?? draftLanguage;
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
@@ -2228,14 +2243,17 @@ function AdminView({
   useEffect(() => {
     let active = true;
 
-    getEditionLocations().then((locations) => {
-      if (!active) {
-        return;
-      }
+    Promise.all([getEditionLocations(), getEditionLanguages()]).then(
+      ([locations, languages]) => {
+        if (!active) {
+          return;
+        }
 
-      setEditionLocations(locations);
-      setLocationDraftFromPublisher(selectedDraftPublisher, locations);
-    });
+        setEditionLocations(locations);
+        setEditionLanguages(languages);
+        setLocationDraftFromPublisher(selectedDraftPublisher, locations);
+      },
+    );
 
     return () => {
       active = false;
@@ -2348,7 +2366,7 @@ function AdminView({
           date: draftDate,
           state: draftState,
           city: selectedDraftCity,
-          language: draftLanguage,
+          language: selectedDraftLanguage,
           accessRule: draftAccessRule,
           sections: draftSections
             .split(",")
@@ -3248,10 +3266,19 @@ function AdminView({
                     <div className="studio-advanced-grid">
                       <label className="studio-field">
                         <span>Language</span>
-                        <input
-                          value={draftLanguage}
+                        <select
+                          value={selectedDraftLanguage}
                           onChange={(event) => setDraftLanguage(event.target.value)}
-                        />
+                        >
+                          {editionLanguages.map((languageOption) => (
+                            <option
+                              key={languageOption.id}
+                              value={languageOption.name}
+                            >
+                              {languageOption.name} ({languageOption.nativeName})
+                            </option>
+                          ))}
+                        </select>
                       </label>
                       <label className="studio-field">
                         <span>Access</span>

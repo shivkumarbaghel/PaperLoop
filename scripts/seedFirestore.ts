@@ -11,6 +11,7 @@ import {
   publishers,
 } from "../src/data/mockData";
 import { editionLocations } from "../src/data/locationData";
+import { editionLanguages } from "../src/data/languageData";
 
 interface SeedDocument {
   id: string;
@@ -207,6 +208,7 @@ async function main() {
   await writeCollection("publishers", publishers);
   await deleteDocuments("publishers", legacyPublisherIds);
   await writeCollection("editionLocations", editionLocations);
+  await writeCollection("editionLanguages", editionLanguages);
   await writeCollection("editions", editions);
   await writeCollection("articlePosts", articles);
   await writeCollection(

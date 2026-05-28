@@ -32,6 +32,10 @@ import {
   editionLocations as fallbackEditionLocations,
   type EditionLocation,
 } from "../data/locationData";
+import {
+  editionLanguages as fallbackEditionLanguages,
+  type EditionLanguage,
+} from "../data/languageData";
 
 const maxUploadBytes = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -73,6 +77,29 @@ export async function getEditionLocations(): Promise<EditionLocation[]> {
     return locations.length ? locations : fallbackEditionLocations;
   } catch {
     return fallbackEditionLocations;
+  }
+}
+
+export async function getEditionLanguages(): Promise<EditionLanguage[]> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return fallbackEditionLanguages;
+  }
+
+  try {
+    const snapshot = await getDocs(collection(firebase.db, "editionLanguages"));
+    const languages = snapshot.docs
+      .map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      }))
+      .filter(isEditionLanguage)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return languages.length ? languages : fallbackEditionLanguages;
+  } catch {
+    return fallbackEditionLanguages;
   }
 }
 
@@ -956,6 +983,19 @@ function isEditionLocation(value: unknown): value is EditionLocation {
     typeof value.state === "string" &&
     Array.isArray(value.cities) &&
     value.cities.every((city) => typeof city === "string")
+  );
+}
+
+function isEditionLanguage(value: unknown): value is EditionLanguage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "name" in value &&
+    "nativeName" in value &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.nativeName === "string"
   );
 }
 

@@ -121,6 +121,11 @@ service cloud.firestore {
       allow write: if isPlatformAdmin();
     }
 
+    match /editionLanguages/{languageId} {
+      allow read: if true;
+      allow write: if isPlatformAdmin();
+    }
+
     match /editions/{editionId} {
       allow read: if canReadContent(resource.data);
       allow write: if canManagePublisher(request.resource.data.publisherId);
