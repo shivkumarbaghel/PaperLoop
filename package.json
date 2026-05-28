@@ -13,6 +13,7 @@
     "seed:firestore": "tsx scripts/seedFirestore.ts",
     "seed:test-access": "tsx scripts/seedTestAccess.ts",
     "seed:editor-assignments": "tsx scripts/seedEditorAssignments.ts",
+    "seed:engagement": "tsx scripts/seedEngagement.ts",
     "clean:firestore": "tsx scripts/cleanFirestore.ts"
   },
   "dependencies": {

@@ -1103,7 +1103,7 @@ export async function createArticleBlockFromPreviewPage(
     author: {
       id: input.editorId ?? slugify(input.authorName),
       name: input.authorName.trim(),
-      publication: edition.title,
+      publication: edition.title.split(" • ")[0]?.trim() || edition.title,
       topics: locale.tags.length ? locale.tags : [input.section.trim()],
       bio: "Publisher staff article created from a PaperLoop preview page.",
       verified: true,

@@ -2,6 +2,7 @@ import type { User } from "firebase/auth";
 import {
   collection,
   doc,
+  type DocumentSnapshot,
   getDoc,
   getDocs,
   query,
@@ -34,7 +35,28 @@ export async function getEditorProfile(editorId: string): Promise<EditorProfile 
 
   if (!snap.exists()) return null;
 
-  return { id: snap.id, ...snap.data() } as EditorProfile;
+  const profile = { id: snap.id, ...snap.data() } as EditorProfile;
+
+  if (profile.avatarUrl) {
+    return profile;
+  }
+
+  // Try to pull avatarUrl from the users doc.  This read is restricted to the
+  // owner and platform admins, so it will be denied for public visitors — that
+  // is fine; we just return the profile without an avatar in that case.
+  try {
+    const userId = profile.userId || editorId;
+    const userSnap = await getDoc(doc(firebase.db, "users", userId));
+
+    if (userSnap.exists()) {
+      const avatarUrl = (userSnap.data().avatarUrl as string | null) ?? null;
+      if (avatarUrl) return { ...profile, avatarUrl };
+    }
+  } catch {
+    // permission-denied or network error — return profile as-is
+  }
+
+  return profile;
 }
 
 export async function getPublisherEditorProfiles(publisherId: string): Promise<EditorProfile[]> {
@@ -79,16 +101,26 @@ export async function getPublisherEditorProfiles(publisherId: string): Promise<E
     ) as PublisherStaffMembership[];
 
   if (staffWithoutProfiles.length) {
-    const userProfiles = await Promise.all(
-      staffWithoutProfiles.map((membership) =>
-        getDoc(doc(firebase.db, "users", membership.userId)),
-      ),
-    );
+    // User profile reads may be denied for non-platform-admin callers — degrade gracefully.
+    let userProfiles: DocumentSnapshot[] = [];
+
+    try {
+      userProfiles = await Promise.all(
+        staffWithoutProfiles.map((membership) =>
+          getDoc(doc(firebase.db, "users", membership.userId)),
+        ),
+      );
+    } catch {
+      // Permission denied or network error — synthesize profiles without display names.
+    }
 
     staffWithoutProfiles.forEach((membership, index) => {
       const userProfile = userProfiles[index];
-      const userName = userProfile.exists()
+      const userName = userProfile?.exists()
         ? ((userProfile.data().name as string | null) ?? null)
+        : null;
+      const avatarUrl = userProfile?.exists()
+        ? ((userProfile.data().avatarUrl as string | null) ?? null)
         : null;
 
       profilesById.set(membership.userId, {
@@ -97,7 +129,7 @@ export async function getPublisherEditorProfiles(publisherId: string): Promise<E
         publisherId: membership.publisherId,
         name: userName?.trim() || membership.userId,
         bio: "",
-        avatarUrl: null,
+        avatarUrl,
         topics: [],
         role: membership.role,
         followers: 0,

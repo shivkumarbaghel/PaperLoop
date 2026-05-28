@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PaperLoop — 4-Slide Pitch Deck</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;600;700;900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0A0E1A;
+      --surface: #121828;
+      --surface-2: #1A2238;
+      --primary: #7C3AED;
+      --primary-light: #A78BFA;
+      --accent: #06B6D4;
+      --accent-warm: #F59E0B;
+      --text: #F1F5F9;
+      --text-sec: #94A3B8;
+      --text-muted: #64748B;
+      --danger: #EF4444;
+      --success: #10B981;
+      --radius: 16px;
+      --shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; }
+    .deck { width: 100vw; display: flex; flex-direction: column; align-items: center; padding: 40px 20px; gap: 40px; }
+    .slide {
+      width: 100%; max-width: 960px; aspect-ratio: 16/9;
+      background: var(--surface); border-radius: var(--radius);
+      padding: 52px 60px; display: flex; flex-direction: column;
+      box-shadow: var(--shadow); position: relative; overflow: hidden;
+    }
+    .slide::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .eyebrow {
+      font-family: 'Urbanist', sans-serif; font-size: 11px; font-weight: 700;
+      letter-spacing: 3px; text-transform: uppercase;
+      color: var(--primary-light); margin-bottom: 12px;
+    }
+    .slide h1 { font-family: 'Urbanist', sans-serif; font-size: 38px; font-weight: 900; line-height: 1.1; margin-bottom: 14px; letter-spacing: -0.5px; }
+    .slide h1 .highlight {
+      background: linear-gradient(90deg, var(--primary-light), var(--accent));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .slide > p { font-size: 15px; line-height: 1.6; color: var(--text-sec); max-width: 620px; }
+    .slide-number { position: absolute; top: 22px; right: 28px; font-family: 'Urbanist', sans-serif; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 1px; }
+    .brand-mark { position: absolute; bottom: 24px; right: 28px; font-family: 'Urbanist', sans-serif; font-size: 12px; font-weight: 900; color: var(--text-muted); letter-spacing: 2px; }
+
+    /* ── SLIDE 1: PROBLEM ── */
+    .slide-problem { background: linear-gradient(135deg, #0F0E1A 0%, #1A1030 60%, #0F0E1A 100%); }
+    .slide-problem::after { content: ''; position: absolute; bottom: -80px; right: -80px; width: 320px; height: 320px; border-radius: 50%; background: radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%); pointer-events: none; }
+    .pain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 20px; flex: 1; }
+    .pain-card { background: var(--surface-2); border-radius: 14px; padding: 20px 18px; border: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 10px; }
+    .pain-icon { width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+    .pain-icon.red { background: rgba(239,68,68,0.15); }
+    .pain-icon.amber { background: rgba(245,158,11,0.15); }
+    .pain-icon.purple { background: rgba(124,58,237,0.15); }
+    .pain-card h3 { font-family: 'Urbanist', sans-serif; font-size: 13px; font-weight: 700; color: var(--text); }
+    .pain-card p { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+    .stat-row { display: flex; gap: 32px; margin-top: auto; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.06); }
+    .stat { display: flex; flex-direction: column; gap: 3px; }
+    .stat .val { font-family: 'Urbanist', sans-serif; font-size: 22px; font-weight: 900; color: var(--danger); }
+    .stat .lbl { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+
+    /* ── SLIDE 2: SOLUTION ── */
+    .slide-solution { background: linear-gradient(135deg, #0F0E1A 0%, #0A1628 60%, #0F0E1A 100%); }
+    .solution-layout { display: flex; gap: 36px; flex: 1; align-items: center; margin-top: 18px; }
+    .solution-flow { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .flow-step { display: flex; align-items: center; gap: 14px; background: var(--surface-2); border-radius: 12px; padding: 14px 18px; border: 1px solid rgba(255,255,255,0.06); }
+    .flow-step-num { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--primary), #5B21B6); display: flex; align-items: center; justify-content: center; font-family: 'Urbanist', sans-serif; font-size: 14px; font-weight: 900; color: white; flex-shrink: 0; }
+    .flow-step h4 { font-family: 'Urbanist', sans-serif; font-size: 13px; font-weight: 700; color: var(--text); }
+    .flow-step p { font-size: 11px; color: var(--text-muted); margin: 2px 0 0 0; line-height: 1.4; }
+    .solution-features { width: 250px; display: flex; flex-direction: column; gap: 8px; }
+    .feat-card { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 10px; }
+    .feat-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .feat-card span { font-size: 12px; color: var(--text-sec); font-weight: 500; }
+
+    /* ── SLIDE 3: TECH ── */
+    .slide-tech { background: linear-gradient(135deg, #0A0E1A 0%, #0F1929 60%, #0A0E1A 100%); }
+    .tech-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 12px; flex: 1; margin-top: 18px; }
+    .tech-card { background: var(--surface-2); border-radius: 14px; padding: 20px; border: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 10px; }
+    .tech-card h3 { font-family: 'Urbanist', sans-serif; font-size: 13px; font-weight: 700; color: var(--text); }
+    .tech-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tech-tag { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 18px; background: rgba(124,58,237,0.15); border: 1px solid rgba(124,58,237,0.3); font-size: 11px; font-weight: 600; color: var(--primary-light); }
+    .tech-tag.c { background: rgba(6,182,212,0.12); border-color: rgba(6,182,212,0.3); color: var(--accent); }
+    .tech-tag.g { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.3); color: var(--success); }
+    .tech-tag.a { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: var(--accent-warm); }
+    .tech-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-sec); }
+    .tech-item::before { content: '→'; color: var(--accent); font-weight: 600; }
+    .tech-features { display: flex; flex-direction: column; gap: 6px; }
+
+    /* ── SLIDE 4: AUDIENCE ── */
+    .slide-audience { background: linear-gradient(135deg, #0F0E1A 0%, #0D1520 60%, #0F0E1A 100%); }
+    .audience-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; flex: 1; margin-top: 18px; align-items: start; }
+    .persona-card { background: var(--surface-2); border-radius: 14px; padding: 20px; border: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 10px; }
+    .persona-header { display: flex; align-items: center; gap: 12px; }
+    .persona-avatar { width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+    .persona-card h3 { font-family: 'Urbanist', sans-serif; font-size: 14px; font-weight: 700; color: var(--text); }
+    .persona-card h4 { font-size: 10px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 1.5px; margin-top: -4px; }
+    .persona-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ptag { padding: 4px 9px; border-radius: 16px; font-size: 10px; font-weight: 600; }
+    .ptag.r { background: rgba(6,182,212,0.12); color: var(--accent); }
+    .ptag.p { background: rgba(124,58,237,0.15); color: var(--primary-light); }
+    .ptag.e { background: rgba(245,158,11,0.12); color: var(--accent-warm); }
+    .persona-needs { display: flex; flex-direction: column; gap: 6px; }
+    .pn { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+    .pn::before { content: '✓'; color: var(--success); flex-shrink: 0; }
+
+    @media (max-width: 720px) {
+      .pain-grid, .solution-layout, .tech-grid, .audience-grid { flex-direction: column; }
+      .slide { padding: 36px 28px; aspect-ratio: auto; min-height: 560px; }
+      .slide h1, .slide-problem h1, .slide-solution h1, .slide-tech h1, .slide-audience h1 { font-size: 26px; }
+      .stat-row { flex-wrap: wrap; gap: 16px; }
+    }
+  </style>
+</head>
+<body>
+<div class="deck">
+
+  <!-- ══════════════════════════════════════════ -->
+  <!-- SLIDE 1: PROBLEM -->
+  <!-- ══════════════════════════════════════════ -->
+  <div class="slide slide-problem">
+    <span class="slide-number">01</span>
+    <p class="eyebrow">PaperLoop — The Problem</p>
+    <h1>India's <span class="highlight">regional newspapers</span> are invisible — and inaccessible — digitally.</h1>
+    <p>2,400+ daily newspapers. 110M+ Hindi/regional readers. Yet the digital reading experience is broken for everyone.</p>
+
+    <div class="pain-grid">
+      <div class="pain-card">
+        <div class="pain-icon red"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <h3>Print-to-digital friction</h3>
+        <p>Publishers invest lakhs in printing yet earn almost nothing online. PDF e-papers don't monetize — they just exist.</p>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon amber">👤</div>
+        <h3>Non-English readers abandoned</h3>
+        <p>Hindi and regional readers — 600M+ citizens — get English-first apps. No reader community. No personalization built for them.</p>
+      </div>
+      <div class="pain-card">
+        <div class="pain-icon purple">📱</div>
+        <h3>Articles buried in raster scans</h3>
+        <p>Even when publishers go digital, articles are trapped inside scanned page images. No links. No engagement. No analytics.</p>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat"><span class="val">65%</span><span class="lbl">of Hindi readers have no digital news product built for them</span></div>
+      <div class="stat"><span class="val">₹2.8K Cr</span><span class="lbl">estimated annual digital ad revenue India ignores regional media</span></div>
+      <div class="stat"><span class="val"><0.2%</span><span class="lbl">estimated subscriber conversion across regional papers today</span></div>
+    </div>
+
+    <span class="brand-mark">PAPERLOOP</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <!-- SLIDE 2: SOLUTION / USER JOURNEY -->
+  <!-- ══════════════════════════════════════════ -->
+  <div class="slide slide-solution">
+    <span class="slide-number">02</span>
+    <p class="eyebrow">PaperLoop — Our Solution</p>
+    <h1>A complete <span class="highlight">e-akhabaar platform</span> for India's regional publishers and readers.</h1>
+    <p>From scanned page to publishable article post — with community, subscription, and analytics built in.</p>
+
+    <div class="solution-layout">
+      <div class="solution-flow">
+        <div class="flow-step">
+          <div class="flow-step-num">1</div>
+          <div>
+            <h4>AI Extracts Articles from E-Paper Pages</h4>
+            <p>Publisher uploads PDF → AI detects articles, headlines, authors → generates structured article post + clipped image.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">2</div>
+          <div>
+            <h4>Editor Reviews & Publishes</h4>
+            <p>Dashboard shows AI-suggested blocks on each page. Editor approves, edits, or rejects. Publishes to city feed.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">3</div>
+          <div>
+            <h4>Readers Discover & Engage</h4>
+            <p>Browse by city + language. E-paper viewer with tap-to-article hotspots. Comment, like, share, follow publishers.</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num">4</div>
+          <div>
+            <h4>Revenue: Subscriptions + Ads</h4>
+            <p>Readers subscribe to specific publishers. Publishers see real analytics. Advertisers buy targeted placement.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="solution-features">
+        <div class="feat-card"><div class="feat-dot"></div><span>E-Paper page viewer with zoom & pan</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Tap hotspots open article directly</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>City/section feed sorted by engagement</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Columnist & editor follower profiles</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Subscriber-only article paywall</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Inline comments & reactions</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Publisher analytics dashboard</span></div>
+        <div class="feat-card"><div class="feat-dot"></div><span>Advertiser campaign management</span></div>
+      </div>
+    </div>
+
+    <span class="brand-mark">PAPERLOOP</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <!-- SLIDE 3: TECH STACK -->
+  <!-- ══════════════════════════════════════════ -->
+  <div class="slide slide-tech">
+    <span class="slide-number">03</span>
+    <p class="eyebrow">PaperLoop — Technology</p>
+    <h1>Modern <span class="highlight">React + Firebase</span> stack — modern, scalable, zero server overhead.</h1>
+    <p>Production-grade tooling. Firebase handles auth, database, storage, and CDN globally.</p>
+
+    <div class="tech-grid">
+      <div class="tech-card">
+        <h3>Frontend</h3>
+        <div class="tech-tags">
+          <span class="tech-tag">⚛ React 19 + TypeScript</span>
+          <span class="tech-tag c">⚡ Vite 7 / React Router v7</span>
+          <span class="tech-tag g">🎨 Lucide icons / CSS modules</span>
+          <span class="tech-tag a">📱 Responsive PWA-ready</span>
+        </div>
+        <div class="tech-features">
+          <div class="tech-item">Responsive web — mobile-first</div>
+          <div class="tech-item">E-paper viewer with pan/zoom</div>
+          <div class="tech-item">Role-based UI (reader/editor/admin)</div>
+          <div class="tech-item">Image lazy-load + storage cache</div>
+        </div>
+      </div>
+
+      <div class="tech-card">
+        <h3>Backend & Data</h3>
+        <div class="tech-tags">
+          <span class="tech-tag">🔥 Firebase Auth (Google + email)</span>
+          <span class="tech-tag a">🍄 Firestore (structured data)</span>
+          <span class="tech-tag g">💾 Firebase Storage (page assets)</span>
+          <span class="tech-tag c">🌐 Firebase Hosting + CDN</span>
+        </div>
+        <div class="tech-features">
+          <div class="tech-item">Firestore security rules per role</div>
+          <div class="tech-item">Real-time subscriptions</div>
+          <div class="tech-item">Algolia search for editions/articles</div>
+          <div class="tech-item">Location-based edition discovery</div>
+        </div>
+      </div>
+
+      <div class="tech-card">
+        <h3>Cloud & AI</h3>
+        <div class="tech-tags">
+          <span class="tech-tag a">📄 Cloud Functions (Node 20)</span>
+          <span class="tech-tag c">🤖 AI: Gemini for article extraction</span>
+          <span class="tech-tag g">🔔 FCM push notifications (planned)</span>
+        </div>
+        <div class="tech-features">
+          <div class="tech-item">PDF e-paper ingestion pipeline</div>
+          <div class="tech-item">AI hotspot detection on pages</div>
+          <div class="tech-item">Auto-article block suggestion</div>
+        </div>
+      </div>
+
+      <div class="tech-card">
+        <h3>Analytics & Monetization</h3>
+        <div class="tech-tags">
+          <span class="tech-tag g">📈 Firebase Analytics built-in</span>
+          <span class="tech-tag c">📊 Publisher engagement dashboard</span>
+          <span class="tech-tag a">💰 Ad campaign management</span>
+        </div>
+        <div class="tech-features">
+          <div class="tech-item">Article views, likes, shares tracked</div>
+          <div class="tech-item">Subscriber conversion funnels</div>
+          <div class="tech-item">Edition/page-level ad placement</div>
+        </div>
+      </div>
+    </div>
+
+    <span class="brand-mark">PAPERLOOP</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════ -->
+  <!-- SLIDE 4: TARGET AUDIENCE -->
+  <!-- ══════════════════════════════════════════ -->
+  <div class="slide slide-audience">
+    <span class="slide-number">04</span>
+    <p class="eyebrow">PaperLoop — Target Audience</p>
+    <h1>Three user segments. <span class="highlight">One unified platform.</span></h1>
+    <p>Built for the entire regional newspaper ecosystem — from Bharat's Hindi reader to the publisher's editorial team.</p>
+
+    <div class="audience-grid">
+      <div class="persona-card">
+        <div class="persona-header">
+          <div class="persona-avatar" style="background: rgba(6,182,212,0.12);">👤</div>
+          <div>
+            <h3>The Regional Reader</h3>
+            <h4>Primary user</h4>
+          </div>
+        </div>
+        <div class="persona-tags">
+          <span class="ptag r">Hindi-primary, 25–55 age</span>
+          <span class="ptag r">Jabalpur · Patna · Varanasi</span>
+          <span class="ptag r">Mobile-first, Tier 2/3 city</span>
+        </div>
+        <div class="persona-needs">
+          <div class="pn">Read local news in Hindi without English</div>
+          <div class="pn">Find trusted publishers by city/state</div>
+          <div class="pn">Comment and engage with local stories</div>
+          <div class="pn">Subscribe to preferred newspapers</div>
+        </div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-header">
+          <div class="persona-avatar" style="background: rgba(124,58,237,0.12);">🏢</div>
+          <div>
+            <h3>The Publisher</h3>
+            <h4>Customer / Revenue source</h4>
+          </div>
+        </div>
+        <div class="persona-tags">
+          <span class="ptag p">Dainik Jagran · Aaj Tak · Narmada Times</span>
+          <span class="ptag p">Enterprise / Growth plan</span>
+          <span class="ptag p">Digital revenue focus</span>
+        </div>
+        <div class="persona-needs">
+          <div class="pn">Digitize e-paper archive with minimal effort</div>
+          <div class="pn">Capture subscriber data + recurring revenue</div>
+          <div class="pn">Real reader analytics (views, subs, shares)</div>
+          <div class="pn">Monetize via ad campaigns on editions</div>
+        </div>
+      </div>
+
+      <div class="persona-card">
+        <div class="persona-header">
+          <div class="persona-avatar" style="background: rgba(245,158,11,0.12);">✍️</div>
+          <div>
+            <h3>The Editor / Columnist</h3>
+            <h4>Platform power user</h4>
+          </div>
+        </div>
+        <div class="persona-tags">
+          <span class="ptag e">Publisher staff roles</span>
+          <span class="ptag e">AI-assisted workflow</span>
+          <span class="ptag e">Review → Publish pipeline</span>
+        </div>
+        <div class="persona-needs">
+          <div class="pn">Approve AI-extracted articles quickly</div>
+          <div class="pn">Build personal reader following</div>
+          <div class="pn">Manage & moderate comment threads</div>
+          <div class="pn">Schedule and manage editions</div>
+        </div>
+      </div>
+    </div>
+
+    <span class="brand-mark">PAPERLOOP</span>
+  </div>
+
+</div>
+</body>
+</html>

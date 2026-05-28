@@ -40,6 +40,138 @@ const testAccounts: TestAccessAccount[] = [
   editorAccount("prabhatkhabar.editor", "Prabhat Khabar", "prabhatkhabar"),
   editorAccount("jagran.editor", "Dainik Jagran", "jagran"),
   editorAccount("navodayatimes.editor", "Navodaya Times", "navodayatimes"),
+
+  // ── Aaj Tak ──────────────────────────────────────────────────────────────
+  namedStaffAccount(
+    "aajtak.suresh",
+    "Suresh Mishra",
+    "aajtak",
+    "editor",
+    "Suresh Mishra is a senior political editor at Aaj Tak with over 15 years covering national policy, Parliament, and government affairs.",
+    ["National", "Politics", "Parliament", "Policy"],
+  ),
+  namedStaffAccount(
+    "aajtak.kavita",
+    "Kavita Singh",
+    "aajtak",
+    "columnist",
+    "Kavita Singh writes opinion and analysis columns on India's foreign policy, diplomacy, and strategic affairs for Aaj Tak.",
+    ["Opinion", "Foreign Policy", "Diplomacy", "International"],
+  ),
+  namedStaffAccount(
+    "aajtak.rajan",
+    "Rajan Tiwari",
+    "aajtak",
+    "editor",
+    "Rajan Tiwari leads the business and economy desk at Aaj Tak, tracking markets, industry, and economic policy.",
+    ["Business", "Economy", "Markets", "Finance"],
+  ),
+
+  // ── Live Hindustan ────────────────────────────────────────────────────────
+  namedStaffAccount(
+    "livehindustan.anita",
+    "Anita Jha",
+    "livehindustan",
+    "editor",
+    "Anita Jha is a principal editor at Live Hindustan covering Bihar and Jharkhand state politics, elections, and regional governance.",
+    ["Regional", "Bihar", "Politics", "Elections"],
+  ),
+  namedStaffAccount(
+    "livehindustan.manoj",
+    "Manoj Kumar",
+    "livehindustan",
+    "editor",
+    "Manoj Kumar reports on agriculture, rural development, and smallholder farmer issues across the Gangetic plains for Live Hindustan.",
+    ["Agriculture", "Rural", "Farmers", "Development"],
+  ),
+  namedStaffAccount(
+    "livehindustan.pooja",
+    "Pooja Verma",
+    "livehindustan",
+    "columnist",
+    "Pooja Verma writes on education policy, women empowerment, and social welfare programmes for Live Hindustan.",
+    ["Education", "Women", "Social", "Policy"],
+  ),
+
+  // ── Amar Ujala ────────────────────────────────────────────────────────────
+  namedStaffAccount(
+    "amarujala.vivek",
+    "Vivek Sharma",
+    "amarujala",
+    "editor",
+    "Vivek Sharma is the culture and religion editor at Amar Ujala, specialising in Varanasi ghats, festivals, and Uttar Pradesh's spiritual heritage.",
+    ["Culture", "Religion", "Varanasi", "Heritage"],
+  ),
+  namedStaffAccount(
+    "amarujala.rekha",
+    "Rekha Gupta",
+    "amarujala",
+    "editor",
+    "Rekha Gupta covers local government, civic infrastructure, and community news across Uttar Pradesh for Amar Ujala.",
+    ["Local", "Civic", "Uttar Pradesh", "Community"],
+  ),
+  namedStaffAccount(
+    "amarujala.deepak",
+    "Deepak Pandey",
+    "amarujala",
+    "columnist",
+    "Deepak Pandey writes historical and heritage columns exploring the rich cultural legacy of eastern Uttar Pradesh and Varanasi for Amar Ujala.",
+    ["History", "Heritage", "Art", "Literature"],
+  ),
+
+  // ── Prabhat Khabar ────────────────────────────────────────────────────────
+  namedStaffAccount(
+    "prabhatkhabar.ashok",
+    "Ashok Singh",
+    "prabhatkhabar",
+    "editor",
+    "Ashok Singh is a senior editor at Prabhat Khabar covering Jharkhand politics, tribal rights, and state governance.",
+    ["Politics", "Jharkhand", "Tribal", "Governance"],
+  ),
+  namedStaffAccount(
+    "prabhatkhabar.meena",
+    "Meena Devi",
+    "prabhatkhabar",
+    "editor",
+    "Meena Devi reports on agricultural markets, rural economy, and mining sector developments across Jharkhand and Bihar for Prabhat Khabar.",
+    ["Agriculture", "Markets", "Rural", "Mining"],
+  ),
+  namedStaffAccount(
+    "prabhatkhabar.sanjay",
+    "Sanjay Yadav",
+    "prabhatkhabar",
+    "columnist",
+    "Sanjay Yadav writes analytical pieces on regional infrastructure, industrial development, and employment for Prabhat Khabar.",
+    ["Infrastructure", "Development", "Industry", "Employment"],
+  ),
+
+  // ── Dainik Jagran ─────────────────────────────────────────────────────────
+  namedStaffAccount(
+    "jagran.ramesh",
+    "Ramesh Shukla",
+    "jagran",
+    "editor",
+    "Ramesh Shukla is a veteran national affairs editor at Dainik Jagran, with deep expertise in Uttar Pradesh politics and central government policy.",
+    ["National", "Politics", "Uttar Pradesh", "Policy"],
+  ),
+  namedStaffAccount(
+    "jagran.sunita",
+    "Sunita Rai",
+    "jagran",
+    "editor",
+    "Sunita Rai heads the education and youth desk at Dainik Jagran, tracking universities, competitive exams, and career news.",
+    ["Education", "Youth", "Career", "University"],
+  ),
+  namedStaffAccount(
+    "jagran.vikram",
+    "Vikram Sinha",
+    "jagran",
+    "columnist",
+    "Vikram Sinha writes popular columns on sports, entertainment, and cultural trends for Dainik Jagran's weekend edition.",
+    ["Sports", "Entertainment", "Culture", "Lifestyle"],
+  ),
+
+  // ── Navodaya Times ────────────────────────────────────────────────────────
   namedStaffAccount(
     "navodayatimes.rajesh",
     "Rajesh Kumar",

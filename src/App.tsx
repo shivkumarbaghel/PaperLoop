@@ -75,6 +75,7 @@ import {
 } from "./services/contentRepository";
 import {
   createArticleComment,
+  listArticleComments,
   recordEngagement,
   type EngagementType,
 } from "./services/engagementRepository";
@@ -210,6 +211,12 @@ const staffRoles: PublisherStaffMembership["role"][] = [
   "columnist",
 ];
 const publisherInviteRoles: PublisherStaffMembership["role"][] = [
+  "editor",
+  "columnist",
+  "moderator",
+];
+const editorProfileRoles: PublisherStaffMembership["role"][] = [
+  "publisher_admin",
   "editor",
   "columnist",
   "moderator",
@@ -2526,6 +2533,8 @@ function PublisherClipDetailRoute({
   const [editHotspotLabel, setEditHotspotLabel] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editBody, setEditBody] = useState("");
+  const [editEditorId, setEditEditorId] = useState("");
+  const [editAuthorName, setEditAuthorName] = useState("Publisher Desk");
   const [editArea, setEditArea] = useState("");
   const [editTagsInput, setEditTagsInput] = useState("");
   const [editAccessRule, setEditAccessRule] = useState<AccessRule>("public");
@@ -2542,6 +2551,9 @@ function PublisherClipDetailRoute({
     "idle" | "uploading" | "success" | "error"
   >("idle");
   const [clipImageMessage, setClipImageMessage] = useState("");
+  const [publisherEditorProfiles, setPublisherEditorProfiles] = useState<EditorProfile[]>(
+    [],
+  );
   const clipImageInputRef = useRef<HTMLInputElement>(null);
   const fallbackArticle = articles.find((item) => item.id === articleId) ?? null;
   const manageablePublisherIds = useMemo(
@@ -2627,6 +2639,8 @@ function PublisherClipDetailRoute({
     setEditSection(nextArticle.section);
     setEditSummary(nextArticle.summary);
     setEditBody(nextArticle.body);
+    setEditEditorId(nextArticle.editorId ?? "");
+    setEditAuthorName(nextArticle.author.name);
     setEditArea(nextArticle.area ?? "");
     setEditTagsInput(formatTagsInput(nextArticle.tags));
     setEditAccessRule(nextArticle.accessRule);
@@ -2661,6 +2675,17 @@ function PublisherClipDetailRoute({
     };
   }, [detail]);
 
+  useEffect(() => {
+    if (!article?.publisherId) {
+      setPublisherEditorProfiles([]);
+      return;
+    }
+
+    getPublisherEditorProfiles(article.publisherId)
+      .then(setPublisherEditorProfiles)
+      .catch(() => setPublisherEditorProfiles([]));
+  }, [article?.publisherId]);
+
   async function handlePostUpdate(regenerateClipImage = false) {
     if (!authUser || !article || !block) {
       setEditStatus("error");
@@ -2688,7 +2713,8 @@ function PublisherClipDetailRoute({
           state: article.state,
           area: editArea,
           tags: parseTagsInput(editTagsInput),
-          authorName: article.author.name,
+          authorName: editAuthorName.trim() || "Publisher Desk",
+          editorId: editEditorId,
           accessRule: editAccessRule,
           discussionRule: editDiscussionRule,
           hotspotLabel: editHotspotLabel,
@@ -2967,6 +2993,43 @@ function PublisherClipDetailRoute({
                   disabled={editStatus === "saving"}
                 />
               </label>
+              <label>
+                <span>Editor</span>
+                <select
+                  value={editEditorId}
+                  onChange={(event) => {
+                    const editorId = event.target.value;
+                    const editor = publisherEditorProfiles.find(
+                      (entry) => entry.id === editorId,
+                    );
+                    setEditEditorId(editorId);
+                    setEditAuthorName(editor?.name ?? "Publisher Desk");
+                  }}
+                  disabled={editStatus === "saving"}
+                >
+                  <option value="">Publisher Desk</option>
+                  {publisherEditorProfiles.map((editor) => (
+                    <option key={editor.id} value={editor.id}>
+                      {editor.name} — {formatRole(editor.role)}
+                    </option>
+                  ))}
+                </select>
+                {editEditorId ? (
+                  <button
+                    type="button"
+                    className="editor-profile-open"
+                    onClick={() => openEditorProfile(navigate, editEditorId)}
+                  >
+                    <UserRound size={14} />
+                    View editor profile
+                  </button>
+                ) : null}
+              </label>
+              {publisherEditorProfiles.length === 0 && (
+                <p className="clip-locale-hint">
+                  No editors found for this publisher yet. Invite team members below.
+                </p>
+              )}
               <label className="studio-field-wide">
                 <span>Summary</span>
                 <textarea
@@ -3346,13 +3409,77 @@ function ArticleView({
   onAuthRequired,
   onOpenReader,
 }: ArticleViewProps) {
+  const navigate = useNavigate();
   const [clipLightboxOpen, setClipLightboxOpen] = useState(false);
   const [comments, setComments] = useState<Comment[]>(() => article.comments);
+  const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentBody, setCommentBody] = useState("");
   const [feedback, setFeedback] = useState("");
   const [pendingAction, setPendingAction] = useState<EngagementType | "post" | "">("");
+  const [assignedEditor, setAssignedEditor] = useState<EditorProfile | null>(null);
+  const assignedEditorId = resolveArticleEditorId(article);
   const canReadSelectedArticle = canReadArticle(article, profile, userAccess);
   const canJoinDiscussion = canUseDiscussion(article, profile, userAccess);
+  const publisherLabel = articlePublisherLabel(article, publisher);
+  const isDeskPost = !assignedEditorId;
+  const bylineName = isDeskPost
+    ? "Publisher Desk"
+    : assignedEditor?.name ?? article.author.name;
+  const bylineSubtitle = isDeskPost
+    ? publisherLabel
+    : `${formatRole(assignedEditor?.role ?? "editor")} • ${publisherLabel}`;
+  const bylineFollowers = assignedEditor?.followers ?? article.author.followers;
+
+  useEffect(() => {
+    let active = true;
+    setCommentsLoading(true);
+
+    listArticleComments(article.id)
+      .then((loadedComments) => {
+        if (active) {
+          setComments(loadedComments);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setComments(article.comments);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setCommentsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [article.id, article.comments]);
+
+  useEffect(() => {
+    if (!assignedEditorId) {
+      setAssignedEditor(null);
+      return undefined;
+    }
+
+    let active = true;
+
+    getEditorProfile(assignedEditorId)
+      .then((editor) => {
+        if (active) {
+          setAssignedEditor(editor);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAssignedEditor(null);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [assignedEditorId]);
 
   async function handleEngagement(type: EngagementType) {
     if (!authUser) {
@@ -3485,34 +3612,52 @@ function ArticleView({
           )}
 
           <div className="byline-card compact">
-            <div className="avatar">{article.author.name.slice(0, 1)}</div>
-            <div>
-              {article.editorId ? (
-                <Link to={`/editor/${article.editorId}`}>
-                  <strong>{article.author.name}</strong>
-                </Link>
+            <div className="byline-identity">
+              {!isDeskPost ? (
+                <button
+                  type="button"
+                  className="byline-avatar-button"
+                  onClick={() => openEditorProfile(navigate, assignedEditorId!)}
+                  aria-label={`Open ${bylineName}'s profile`}
+                >
+                  <EditorAvatar
+                    name={bylineName}
+                    avatarUrl={assignedEditor?.avatarUrl}
+                  />
+                </button>
               ) : (
-                <strong>{article.author.name}</strong>
+                <EditorAvatar name={bylineName} />
               )}
-              <span>
-                {article.author.publication} • {article.author.followers.toLocaleString()} followers
-              </span>
+              <div className="byline-meta">
+                {!isDeskPost ? (
+                  <button
+                    type="button"
+                    className="byline-name-link"
+                    onClick={() => openEditorProfile(navigate, assignedEditorId!)}
+                  >
+                    <strong>{bylineName}</strong>
+                  </button>
+                ) : (
+                  <strong>{bylineName}</strong>
+                )}
+                <span className="byline-subtitle">
+                  {bylineSubtitle}
+                  {!isDeskPost
+                    ? ` • ${bylineFollowers.toLocaleString()} followers`
+                    : null}
+                </span>
+              </div>
             </div>
-            {article.editorId ? (
-              <Link to={`/editor/${article.editorId}`} className="byline-profile-link">
-                <UserRound size={16} />
-                View profile
-              </Link>
-            ) : !publisher && (
+            {!isDeskPost ? (
               <button
                 type="button"
-                onClick={() => handleEngagement("follow")}
-                disabled={pendingAction === "follow"}
+                className="byline-profile-link"
+                onClick={() => openEditorProfile(navigate, assignedEditorId!)}
               >
-                <Bell size={18} />
-                {pendingAction === "follow" ? "Following..." : "Follow"}
+                <UserRound size={16} />
+                View profile
               </button>
-            )}
+            ) : null}
           </div>
 
           <div className="engagement-row">
@@ -3632,7 +3777,9 @@ function ArticleView({
             </p>
           )}
           <div className="comment-list">
-            {comments.length === 0 ? (
+            {commentsLoading ? (
+              <p className="empty-state">Loading discussion...</p>
+            ) : comments.length === 0 ? (
               <p className="empty-state">No comments yet. Start the discussion.</p>
             ) : (
               comments.map((comment) => (
@@ -3772,6 +3919,31 @@ function createPlaceholderEdition(publisher: Publisher): Edition {
   };
 }
 
+interface EditorAvatarProps {
+  name: string;
+  avatarUrl?: string | null;
+  size?: "md" | "lg";
+  className?: string;
+}
+
+function EditorAvatar({
+  name,
+  avatarUrl,
+  size = "md",
+  className = "",
+}: EditorAvatarProps) {
+  const initial = name.trim().slice(0, 1).toUpperCase() || "?";
+  const classes = ["avatar", "avatar-round", size === "lg" ? "avatar-lg" : "", className]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={classes} aria-hidden="true">
+      {avatarUrl ? <img src={avatarUrl} alt="" /> : initial}
+    </div>
+  );
+}
+
 function formatRole(value: string) {
   return value
     .split("_")
@@ -3787,6 +3959,45 @@ function publisherName(publishers: Publisher[], publisherId: string) {
 
 function grantAccessCommand(invite: PublisherStaffInvite) {
   return `npm run grant:access -- --email ${invite.email} --publisher ${invite.publisherId} --role ${invite.role} --name "${invite.name}"`;
+}
+
+function editorProfilePath(editorId: string) {
+  return `/editor/${editorId}`;
+}
+
+function openEditorProfile(
+  navigate: ReturnType<typeof useNavigate>,
+  editorId: string,
+) {
+  if (!editorId) {
+    return;
+  }
+
+  navigate(editorProfilePath(editorId));
+}
+
+function hasEditorProfileRole(role: PublisherStaffMembership["role"]) {
+  return (editorProfileRoles as string[]).includes(role);
+}
+
+function articlePublisherLabel(article: ArticlePost, publisher?: Publisher) {
+  return (
+    publisher?.name ??
+    article.author.publication.split(" • ")[0]?.trim() ??
+    article.author.publication
+  );
+}
+
+function resolveArticleEditorId(article: ArticlePost): string | null {
+  if (article.editorId) {
+    return article.editorId;
+  }
+
+  if (/^[A-Za-z0-9]{20,}$/.test(article.author.id)) {
+    return article.author.id;
+  }
+
+  return null;
 }
 
 function upsertEdition(editions: Edition[], nextEdition: Edition) {
@@ -5911,14 +6122,38 @@ function AdminView({
                 ) : (
                   staffDirectory.map((member) => (
                     <article className="staff-card" key={member.id}>
-                      <div>
-                        <strong>{formatRole(member.role)}</strong>
-                        <span>
-                          {publisherName(publishers, member.publisherId)} •{" "}
-                          {member.displayEmail ?? member.displayName}
-                        </span>
-                      </div>
+                      {hasEditorProfileRole(member.role) ? (
+                        <button
+                          type="button"
+                          className="staff-card-identity"
+                          onClick={() => openEditorProfile(navigate, member.userId)}
+                        >
+                          <strong>{formatRole(member.role)}</strong>
+                          <span>
+                            {publisherName(publishers, member.publisherId)} •{" "}
+                            {member.displayEmail ?? member.displayName}
+                          </span>
+                        </button>
+                      ) : (
+                        <div>
+                          <strong>{formatRole(member.role)}</strong>
+                          <span>
+                            {publisherName(publishers, member.publisherId)} •{" "}
+                            {member.displayEmail ?? member.displayName}
+                          </span>
+                        </div>
+                      )}
                       <div className="staff-actions">
+                        {hasEditorProfileRole(member.role) ? (
+                          <button
+                            type="button"
+                            className="staff-profile-link"
+                            onClick={() => openEditorProfile(navigate, member.userId)}
+                          >
+                            <UserRound size={14} />
+                            View profile
+                          </button>
+                        ) : null}
                         <small>{member.status}</small>
                         {member.status === "active" ? (
                           <button
@@ -6715,6 +6950,16 @@ function AdminView({
                               </option>
                             ))}
                           </select>
+                          {articleEditorId ? (
+                            <button
+                              type="button"
+                              className="editor-profile-open"
+                              onClick={() => openEditorProfile(navigate, articleEditorId)}
+                            >
+                              <UserRound size={14} />
+                              View editor profile
+                            </button>
+                          ) : null}
                         </label>
                         {publisherEditorProfiles.length === 0 && (
                           <p className="clip-locale-hint">
@@ -7105,7 +7350,7 @@ function AdminView({
                 )}
                 {staffDirectory.filter(
                   (member) =>
-                    member.publisherId === selectedDraftPublisherId &&
+                    member.publisherId === selectedInvitePublisherId &&
                     (publisherInviteRoles as string[]).includes(member.role),
                 ).length === 0 ? (
                   <p className="empty-state">
@@ -7115,19 +7360,31 @@ function AdminView({
                   staffDirectory
                     .filter(
                       (member) =>
-                        member.publisherId === selectedDraftPublisherId &&
+                        member.publisherId === selectedInvitePublisherId &&
                         (publisherInviteRoles as string[]).includes(member.role),
                     )
                     .map((member) => (
                       <article className="staff-card" key={member.id}>
-                        <div>
+                        <button
+                          type="button"
+                          className="staff-card-identity"
+                          onClick={() => openEditorProfile(navigate, member.userId)}
+                        >
                           <strong>{formatRole(member.role)}</strong>
                           <span>
                             {member.displayName}
                             {member.displayEmail ? ` • ${member.displayEmail}` : ""}
                           </span>
-                        </div>
+                        </button>
                         <div className="staff-actions">
+                          <button
+                            type="button"
+                            className="staff-profile-link"
+                            onClick={() => openEditorProfile(navigate, member.userId)}
+                          >
+                            <UserRound size={14} />
+                            View profile
+                          </button>
                           <small>{member.status}</small>
                           {member.status === "active" ? (
                             <button
@@ -7153,7 +7410,7 @@ function AdminView({
                 <h3>Pending invites</h3>
                 {pendingInvites.filter(
                   (invite) =>
-                    invite.publisherId === selectedDraftPublisherId &&
+                    invite.publisherId === selectedInvitePublisherId &&
                     (publisherInviteRoles as string[]).includes(invite.role),
                 ).length === 0 ? (
                   <p className="empty-state">No pending invites for this publisher.</p>
@@ -7161,7 +7418,7 @@ function AdminView({
                   pendingInvites
                     .filter(
                       (invite) =>
-                        invite.publisherId === selectedDraftPublisherId &&
+                        invite.publisherId === selectedInvitePublisherId &&
                         (publisherInviteRoles as string[]).includes(invite.role),
                     )
                     .map((invite) => (
@@ -7259,11 +7516,33 @@ function AdminView({
                 ) : (
                   staffDirectory.slice(0, 5).map((member) => (
                     <article className="staff-card" key={member.id}>
-                      <div>
-                        <strong>{formatRole(member.role)}</strong>
-                        <span>{publisherName(publishers, member.publisherId)}</span>
-                      </div>
-                      <small>{member.status}</small>
+                      {hasEditorProfileRole(member.role) ? (
+                        <button
+                          type="button"
+                          className="staff-card-identity"
+                          onClick={() => openEditorProfile(navigate, member.userId)}
+                        >
+                          <strong>{formatRole(member.role)}</strong>
+                          <span>{publisherName(publishers, member.publisherId)}</span>
+                        </button>
+                      ) : (
+                        <div>
+                          <strong>{formatRole(member.role)}</strong>
+                          <span>{publisherName(publishers, member.publisherId)}</span>
+                        </div>
+                      )}
+                      {hasEditorProfileRole(member.role) ? (
+                        <button
+                          type="button"
+                          className="staff-profile-link"
+                          onClick={() => openEditorProfile(navigate, member.userId)}
+                        >
+                          <UserRound size={14} />
+                          View profile
+                        </button>
+                      ) : (
+                        <small>{member.status}</small>
+                      )}
                     </article>
                   ))
                 )}
@@ -7517,13 +7796,16 @@ function EditorProfileRoute({
   useEffect(() => {
     if (!editorId) return;
 
+    window.scrollTo({ top: 0, behavior: "auto" });
     setLoading(true);
     getEditorProfile(editorId)
       .then((ep) => {
         setEditorProfile(ep);
-        setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        setEditorProfile(null);
+      })
+      .finally(() => setLoading(false));
   }, [editorId]);
 
   useEffect(() => {
@@ -7594,25 +7876,33 @@ function EditorProfileRoute({
 
       <section className="workspace-panel publisher-context-panel editor-profile-panel">
         <div className="byline-card">
-          <div className="avatar avatar-lg">{editorProfile.name.slice(0, 1)}</div>
-          <div>
-            <strong>{editorProfile.name}</strong>
-            <span>
-              {formatRole(editorProfile.role)} •{" "}
-              {publisher?.name ?? editorProfile.publisherId}
-            </span>
-            <span>{editorProfile.followers.toLocaleString()} followers</span>
+          <div className="byline-identity">
+            <EditorAvatar
+              name={editorProfile.name}
+              avatarUrl={editorProfile.avatarUrl}
+              size="lg"
+            />
+            <div>
+              <strong>{editorProfile.name}</strong>
+              <span>
+                {formatRole(editorProfile.role)} •{" "}
+                {publisher?.name ?? editorProfile.publisherId}
+              </span>
+            </div>
           </div>
-          {authUser && authUser.uid !== editorProfile.userId && (
-            <button
-              type="button"
-              onClick={handleFollowToggle}
-              disabled={followPending}
-            >
-              <Bell size={18} />
-              {followPending ? "…" : following ? "Following" : "Follow"}
-            </button>
-          )}
+          <div className="byline-card-side">
+            <span>{editorProfile.followers.toLocaleString()} followers</span>
+            {authUser && authUser.uid !== editorProfile.userId && (
+              <button
+                type="button"
+                onClick={handleFollowToggle}
+                disabled={followPending}
+              >
+                <Bell size={18} />
+                {followPending ? "…" : following ? "Following" : "Follow"}
+              </button>
+            )}
+          </div>
         </div>
 
         {editorProfile.bio && (
