@@ -202,6 +202,11 @@ export const appendEditionPages = onCall(
 
     for (const page of pageAssets) {
       const pageImage = await uploadPageImage(edition, page);
+      const suggestedBlockCount = await persistSuggestedBlocks(
+        edition,
+        page,
+        openAiApiKey.value(),
+      );
 
       appendedPages.push({
         id: page.pageId,
@@ -216,6 +221,12 @@ export const appendEditionPages = onCall(
         height: pageImage.height,
         processingStatus: "ready",
         hotspots: [],
+      });
+
+      logger.info("Appended edition page with suggested blocks", {
+        editionId: edition.id,
+        pageId: page.pageId,
+        suggestedBlockCount,
       });
     }
 
@@ -250,15 +261,16 @@ export const processEditionAsset = onDocumentWritten(
       id: after.id,
       ...after.data(),
     } as EditionRecord;
-    const beforeStatus = event.data?.before.exists
-      ? (event.data.before.data() as EditionRecord).status
-      : undefined;
+    const beforeData = event.data?.before.exists ? event.data.before.data() : undefined;
+    const beforeStatus = beforeData?.status as EditionRecord["status"] | undefined;
+    const beforeQueueToken = processingQueueToken(beforeData?.processingQueuedAt);
+    const afterQueueToken = processingQueueToken(after.data()?.processingQueuedAt);
 
     if (
       edition.status !== "processing" ||
-      beforeStatus === "processing" ||
       !edition.publisherId ||
-      !edition.sourceAssetPath
+      !edition.sourceAssetPath ||
+      (beforeStatus === "processing" && beforeQueueToken === afterQueueToken)
     ) {
       return;
     }
@@ -288,37 +300,7 @@ export const processEditionAsset = onDocumentWritten(
 
       for (const page of pages) {
         const pageImage = await uploadPageImage(edition, page);
-        const suggestedBlocks = await detectBlocks(page, openAiApiKey.value());
-
-        await Promise.all(
-          suggestedBlocks.map((block, index) =>
-            db.collection("articleBlocks").doc(`${page.pageId}-ai-${index + 1}`).set(
-              {
-                id: `${page.pageId}-ai-${index + 1}`,
-                publisherId: edition.publisherId,
-                editionId: edition.id,
-                pageId: page.pageId,
-                pageNumber: page.pageNumber,
-                type: block.type,
-                status: "suggested",
-                source: "ai",
-                label: block.label,
-                title: block.title,
-                section: block.section || page.section,
-                summary: block.summary,
-                body: block.body,
-                x: block.x,
-                y: block.y,
-                width: block.width,
-                height: block.height,
-                confidence: block.confidence,
-                createdAt: FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
-              },
-              { merge: true },
-            ),
-          ),
-        );
+        await persistSuggestedBlocks(edition, page, openAiApiKey.value());
 
         pagesWithBlocks.push({
           id: page.pageId,
@@ -491,6 +473,62 @@ async function saveDownloadableFile(path: string, buffer: Buffer, contentType: s
   });
 
   return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+}
+
+async function persistSuggestedBlocks(
+  edition: EditionRecord,
+  page: PageAssetResult,
+  apiKey: string,
+) {
+  const suggestedBlocks = await detectBlocks(page, apiKey);
+
+  await Promise.all(
+    suggestedBlocks.map((block, index) =>
+      db.collection("articleBlocks").doc(`${page.pageId}-ai-${index + 1}`).set(
+        {
+          id: `${page.pageId}-ai-${index + 1}`,
+          publisherId: edition.publisherId,
+          editionId: edition.id,
+          pageId: page.pageId,
+          pageNumber: page.pageNumber,
+          type: block.type,
+          status: "suggested",
+          source: "ai",
+          label: block.label,
+          title: block.title,
+          section: block.section || page.section,
+          summary: block.summary,
+          body: block.body,
+          x: block.x,
+          y: block.y,
+          width: block.width,
+          height: block.height,
+          confidence: block.confidence,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    ),
+  );
+
+  return suggestedBlocks.length;
+}
+
+function processingQueueToken(value: unknown) {
+  if (value && typeof value === "object" && "toMillis" in value) {
+    return String((value as { toMillis: () => number }).toMillis());
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    return String(value);
+  }
+
+  return "";
 }
 
 async function detectBlocks(

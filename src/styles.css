@@ -2133,6 +2133,23 @@ main:has(.admin-layout) {
   text-align: left;
 }
 
+.page-thumb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: start;
+}
+
+.page-thumb-row.active .page-thumb {
+  border-color: #d90404;
+  box-shadow: 0 0 0 2px rgba(217, 4, 4, 0.12);
+}
+
+.page-thumb-row .page-thumb {
+  width: 100%;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+}
+
 .page-thumb.active {
   border-color: #d90404;
   box-shadow: 0 0 0 2px rgba(217, 4, 4, 0.12);

@@ -412,114 +412,48 @@ export async function appendEditionPagesFromFile(
     throw new Error("Page asset must be 25 MB or smaller.");
   }
 
-  if (sourceFile.type === "application/pdf") {
-    const incomingPath = [
-      "publishers",
-      edition.publisherId,
-      "editions",
-      edition.id,
-      "incoming",
-      `${Date.now()}-${safeFileName(sourceFile.name)}`,
-    ].join("/");
+  const incomingPath = [
+    "publishers",
+    edition.publisherId,
+    "editions",
+    edition.id,
+    "incoming",
+    `${Date.now()}-${safeFileName(sourceFile.name)}`,
+  ].join("/");
 
-    await uploadBytes(ref(firebase.storage, incomingPath), sourceFile, {
-      contentType: sourceFile.type,
-      customMetadata: {
-        publisherId: edition.publisherId,
-        editionId: edition.id,
-        uploadedBy: user.uid,
-      },
-    });
-
-    const callable = httpsCallable<
-      {
-        publisherId: string;
-        editionId: string;
-        sourceAssetPath: string;
-        contentType: string;
-      },
-      { addedPageCount: number; pages: Page[] }
-    >(firebase.functions, "appendEditionPages");
-    const response = await callable({
+  await uploadBytes(ref(firebase.storage, incomingPath), sourceFile, {
+    contentType: sourceFile.type,
+    customMetadata: {
       publisherId: edition.publisherId,
       editionId: edition.id,
-      sourceAssetPath: incomingPath,
-      contentType: sourceFile.type,
-    });
-    void response.data.addedPageCount;
-    const refreshedEdition = await getEditionById(edition.id);
-
-    if (!refreshedEdition) {
-      throw new Error("Pages were added but the edition could not be refreshed.");
-    }
-
-    return refreshedEdition;
-  }
-
-  const pageNumber = nextEditionPageNumber(edition.pages);
-  const pageId = `${edition.id}-p${pageNumber}`;
-  const { pageBlob, thumbnailBlob, width, height } =
-    await prepareClientPageAssets(sourceFile);
-  const imagePath = editionPageImagePath(edition, pageNumber);
-  const thumbnailPath = editionPageThumbnailPath(edition, pageNumber);
-
-  await Promise.all([
-    uploadBytes(ref(firebase.storage, imagePath), pageBlob, {
-      contentType: "image/png",
-      customMetadata: {
-        publisherId: edition.publisherId,
-        editionId: edition.id,
-        pageId,
-        pageNumber: String(pageNumber),
-        uploadedBy: user.uid,
-      },
-    }),
-    uploadBytes(ref(firebase.storage, thumbnailPath), thumbnailBlob, {
-      contentType: "image/webp",
-      customMetadata: {
-        publisherId: edition.publisherId,
-        editionId: edition.id,
-        pageId,
-        pageNumber: String(pageNumber),
-        uploadedBy: user.uid,
-      },
-    }),
-  ]);
-
-  const [imageUrl, thumbnailUrl] = await Promise.all([
-    getDownloadURL(ref(firebase.storage, imagePath)),
-    getDownloadURL(ref(firebase.storage, thumbnailPath)),
-  ]);
-  const section =
-    edition.sections[pageNumber - 1] ??
-    edition.sections[edition.sections.length - 1] ??
-    "General";
-  const newPage: Page = {
-    id: pageId,
-    editionId: edition.id,
-    pageNumber,
-    section,
-    headline: `${section} page`,
-    subhead: `${edition.city} edition • ${edition.date}`,
-    imageUrl,
-    thumbnailUrl,
-    width,
-    height,
-    processingStatus: "ready",
-    hotspots: [],
-  };
-  const nextPages = [...edition.pages, newPage];
-
-  await updateDoc(doc(firebase.db, "editions", edition.id), {
-    pages: nextPages,
-    updatedAt: serverTimestamp(),
-    updatedBy: user.uid,
+      uploadedBy: user.uid,
+    },
   });
 
-  return {
-    ...edition,
-    pages: nextPages,
-  };
+  const callable = httpsCallable<
+    {
+      publisherId: string;
+      editionId: string;
+      sourceAssetPath: string;
+      contentType: string;
+    },
+    { addedPageCount: number; pages: Page[] }
+  >(firebase.functions, "appendEditionPages");
+
+  await callable({
+    publisherId: edition.publisherId,
+    editionId: edition.id,
+    sourceAssetPath: incomingPath,
+    contentType: sourceFile.type,
+  });
+
+  const refreshedEdition = await getEditionById(edition.id);
+
+  if (!refreshedEdition) {
+    throw new Error("Pages were added but the edition could not be refreshed.");
+  }
+
+  return refreshedEdition;
 }
 
 export async function deletePublisherEdition(edition: Edition): Promise<void> {
@@ -533,7 +467,7 @@ export async function deletePublisherEdition(edition: Edition): Promise<void> {
     throw new Error("Edition record is missing publisher or edition id.");
   }
 
-  const [blocksSnapshot, postsSnapshot, commentsSnapshot, engagementsSnapshot] =
+  const [blocksSnapshot, postsSnapshot, commentsSnapshot, engagementsSnapshot, pageAssetsSnapshot] =
     await Promise.all([
       getDocs(
         query(
@@ -556,6 +490,9 @@ export async function deletePublisherEdition(edition: Edition): Promise<void> {
           where("editionId", "==", edition.id),
         ),
       ),
+      getDocs(
+        query(collection(firebase.db, "pageAssets"), where("editionId", "==", edition.id)),
+      ),
     ]);
 
   const jobSnapshot = await getDoc(doc(firebase.db, "processingJobs", edition.id));
@@ -565,6 +502,7 @@ export async function deletePublisherEdition(edition: Edition): Promise<void> {
     ...postsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
     ...commentsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
     ...engagementsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...pageAssetsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
     jobSnapshot.exists()
       ? deleteDoc(doc(firebase.db, "processingJobs", edition.id))
       : Promise.resolve(),
@@ -578,6 +516,77 @@ export async function deletePublisherEdition(edition: Edition): Promise<void> {
   } catch {
     // Storage cleanup is best-effort when files were never uploaded or already removed.
   }
+}
+
+export async function deletePublisherEditionPage(
+  edition: Edition,
+  pageId: string,
+): Promise<Edition> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.id || !edition.publisherId) {
+    throw new Error("Edition record is missing publisher or edition id.");
+  }
+
+  const page = edition.pages.find((editionPage) => editionPage.id === pageId);
+
+  if (!page) {
+    throw new Error("Page not found in this edition.");
+  }
+
+  const [blocksSnapshot, postsSnapshot, commentsSnapshot, engagementsSnapshot, pageAssetSnapshot] =
+    await Promise.all([
+      getDocs(
+        query(collection(firebase.db, "articleBlocks"), where("pageId", "==", pageId)),
+      ),
+      getDocs(
+        query(collection(firebase.db, "articlePosts"), where("pageId", "==", pageId)),
+      ),
+      getDocs(
+        query(collection(firebase.db, "comments"), where("pageId", "==", pageId)),
+      ),
+      getDocs(
+        query(collection(firebase.db, "engagements"), where("pageId", "==", pageId)),
+      ),
+      getDoc(doc(firebase.db, "pageAssets", pageId)),
+    ]);
+
+  const storageDeletes = [
+    deleteStorageObject(editionPageImagePath(edition, page.pageNumber)),
+    deleteStorageObject(editionPageThumbnailPath(edition, page.pageNumber)),
+  ];
+
+  postsSnapshot.docs.forEach((documentSnapshot) => {
+    const post = documentSnapshot.data() as ArticlePost;
+
+    if (post.clippedImagePath) {
+      storageDeletes.push(deleteStorageObject(post.clippedImagePath));
+    }
+  });
+
+  const nextPages = edition.pages.filter((editionPage) => editionPage.id !== pageId);
+
+  await Promise.all([
+    ...blocksSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...postsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...commentsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...engagementsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    pageAssetSnapshot.exists() ? deleteDoc(pageAssetSnapshot.ref) : Promise.resolve(),
+    updateDoc(doc(firebase.db, "editions", edition.id), {
+      pages: nextPages,
+      updatedAt: serverTimestamp(),
+    }),
+    ...storageDeletes,
+  ]);
+
+  return {
+    ...edition,
+    pages: nextPages,
+  };
 }
 
 export async function getPublisherArticleBlocks(
@@ -1543,63 +1552,18 @@ function editionPageThumbnailPath(edition: Edition, pageNumber: number) {
   ].join("/");
 }
 
-function nextEditionPageNumber(pages: Page[]) {
-  if (!pages.length) {
-    return 1;
+async function deleteStorageObject(storagePath: string) {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return;
   }
 
-  return Math.max(...pages.map((page) => page.pageNumber)) + 1;
-}
-
-async function prepareClientPageAssets(sourceFile: File) {
-  const sourceBitmap = await createImageBitmap(sourceFile);
-  const maxWidth = 1800;
-  const scale = sourceBitmap.width > maxWidth ? maxWidth / sourceBitmap.width : 1;
-  const width = Math.max(1, Math.round(sourceBitmap.width * scale));
-  const height = Math.max(1, Math.round(sourceBitmap.height * scale));
-  const pageCanvas = document.createElement("canvas");
-  pageCanvas.width = width;
-  pageCanvas.height = height;
-
-  const pageContext = pageCanvas.getContext("2d");
-
-  if (!pageContext) {
-    sourceBitmap.close();
-    throw new Error("Unable to prepare the page image.");
+  try {
+    await deleteObject(ref(firebase.storage, storagePath));
+  } catch {
+    // Storage cleanup is best-effort when files were never uploaded or already removed.
   }
-
-  pageContext.drawImage(sourceBitmap, 0, 0, width, height);
-  sourceBitmap.close();
-
-  const pageBlob = await canvasToBlob(pageCanvas, "image/png", 0.92);
-  const thumbnailBitmap = await createImageBitmap(pageBlob);
-  const thumbMaxWidth = 360;
-  const thumbScale =
-    thumbnailBitmap.width > thumbMaxWidth ? thumbMaxWidth / thumbnailBitmap.width : 1;
-  const thumbWidth = Math.max(1, Math.round(thumbnailBitmap.width * thumbScale));
-  const thumbHeight = Math.max(1, Math.round(thumbnailBitmap.height * thumbScale));
-  const thumbCanvas = document.createElement("canvas");
-  thumbCanvas.width = thumbWidth;
-  thumbCanvas.height = thumbHeight;
-
-  const thumbContext = thumbCanvas.getContext("2d");
-
-  if (!thumbContext) {
-    thumbnailBitmap.close();
-    throw new Error("Unable to prepare the page thumbnail.");
-  }
-
-  thumbContext.drawImage(thumbnailBitmap, 0, 0, thumbWidth, thumbHeight);
-  thumbnailBitmap.close();
-
-  const thumbnailBlob = await canvasToBlob(thumbCanvas, "image/webp", 0.82);
-
-  return {
-    pageBlob,
-    thumbnailBlob,
-    width,
-    height,
-  };
 }
 
 function toPixelCrop(

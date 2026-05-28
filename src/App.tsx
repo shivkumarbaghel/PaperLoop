@@ -89,6 +89,7 @@ import {
   createEditionDraft,
   deleteArticleBlock,
   deletePublisherEdition,
+  deletePublisherEditionPage,
   extractClipRegionDetails,
   generateEditionPreviewPages,
   getEditionById,
@@ -139,6 +140,7 @@ import type {
   Edition,
   EditionStatus,
   MetricCard,
+  Page,
   Publisher,
   PublisherStaffInvite,
   PublisherStaffMembership,
@@ -3446,8 +3448,8 @@ function AdminView({
       setPageAppendStatus("success");
       setUploadMessage(
         addedCount === 1
-          ? `Page ${lastPage?.pageNumber ?? ""} added to this edition.`
-          : `${addedCount} pages added to this edition.`,
+          ? `Page ${lastPage?.pageNumber ?? ""} added. Suggested clips will appear in Page clips shortly.`
+          : `${addedCount} pages added. Suggested clips will appear in Page clips shortly.`,
       );
       setWorkspaceRefreshKey((currentKey) => currentKey + 1);
     } catch (error) {
@@ -3459,6 +3461,72 @@ function AdminView({
       setPageAppendStatus((currentStatus) =>
         currentStatus === "uploading" ? "idle" : currentStatus,
       );
+    }
+  }
+
+  async function handleDeleteEditionPage(page: Page) {
+    if (!authUser || !previewEdition) {
+      setUploadStatus("error");
+      setUploadMessage("Open an edition before deleting a page.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, previewEdition.publisherId)) {
+      setUploadStatus("error");
+      setUploadMessage("This account cannot manage that publisher.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete page ${page.pageNumber}? This removes clips, posts, comments, and engagement for this page.`,
+      )
+    ) {
+      return;
+    }
+
+    setPageAppendStatus("uploading");
+    setUploadMessage("");
+
+    try {
+      const updatedEdition = await deletePublisherEditionPage(previewEdition, page.id);
+      const nextPage =
+        updatedEdition.pages.find((editionPage) => editionPage.id === articlePageId) ??
+        updatedEdition.pages[0] ??
+        null;
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, updatedEdition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === updatedEdition.id ? updatedEdition : draft,
+        ),
+      );
+      setWorkspaceBlocks((currentBlocks) =>
+        currentBlocks.filter(
+          (block) =>
+            block.editionId !== updatedEdition.id || block.pageId !== page.id,
+        ),
+      );
+      setPreviewEditionId(updatedEdition.id);
+      setArticlePageId(nextPage?.id ?? "");
+      if (nextPage) {
+        resetArticleBlockForm(nextPage.section);
+      } else {
+        resetArticleBlockForm(articleSection);
+        setSelectedBlockId("");
+      }
+      setUploadStatus("success");
+      setUploadMessage(`Page ${page.pageNumber} and related content deleted.`);
+      setWorkspaceRefreshKey((currentKey) => currentKey + 1);
+    } catch (error) {
+      setUploadStatus("error");
+      setUploadMessage(
+        error instanceof Error ? error.message : "Unable to delete this page.",
+      );
+    } finally {
+      setPageAppendStatus("idle");
     }
   }
 
@@ -4971,25 +5039,38 @@ function AdminView({
                   <div className="clip-rail-pages">
                     <div className="page-thumb-list">
                       {previewEdition.pages.map((page) => (
-                        <button
-                          type="button"
-                          className={`page-thumb ${page.id === selectedArticlePage?.id ? "active" : ""}`}
+                        <div
+                          className={`page-thumb-row ${page.id === selectedArticlePage?.id ? "active" : ""}`}
                           key={page.id}
-                          onClick={() => selectPreviewPage(page.id)}
                         >
-                          {page.thumbnailUrl || page.imageUrl ? (
-                            <img
-                              src={page.thumbnailUrl ?? page.imageUrl}
-                              alt={`Page ${page.pageNumber}`}
-                            />
-                          ) : (
-                            <div className="page-thumb-placeholder">
-                              <Newspaper size={22} />
-                            </div>
-                          )}
-                          <span>Page {page.pageNumber}</span>
-                          <small>{page.section}</small>
-                        </button>
+                          <button
+                            type="button"
+                            className="page-thumb"
+                            onClick={() => selectPreviewPage(page.id)}
+                          >
+                            {page.thumbnailUrl || page.imageUrl ? (
+                              <img
+                                src={page.thumbnailUrl ?? page.imageUrl}
+                                alt={`Page ${page.pageNumber}`}
+                              />
+                            ) : (
+                              <div className="page-thumb-placeholder">
+                                <Newspaper size={22} />
+                              </div>
+                            )}
+                            <span>Page {page.pageNumber}</span>
+                            <small>{page.section}</small>
+                          </button>
+                          <button
+                            type="button"
+                            className="clip-delete-btn"
+                            aria-label={`Delete page ${page.pageNumber}`}
+                            disabled={pageAppendStatus === "uploading"}
+                            onClick={() => void handleDeleteEditionPage(page)}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       ))}
                       <label
                         className={`page-add-card ${pageAppendStatus === "uploading" ? "loading" : ""}`}
