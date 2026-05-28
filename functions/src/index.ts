@@ -334,6 +334,8 @@ async function detectBlocks(
                 "Identify newspaper article and advertisement blocks in this Hindi e-paper page.",
                 "Return normalized percentage coordinates relative to the page image.",
                 "Coordinates must use 0-100 percentages, and every block must satisfy x + width <= 100 and y + height <= 100.",
+                "Draw tight rectangles around complete story or ad units only; do not include mastheads, page margins, crop marks, color bars, or unrelated neighboring stories.",
+                "Prefer several precise blocks over one large mixed block, and avoid overlaps unless the printed page genuinely overlaps content.",
                 "Keep body text short; editors will correct OCR manually.",
               ].join(" "),
             },

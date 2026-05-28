@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CircleDollarSign,
   FileUp,
   Filter,
@@ -1617,6 +1619,7 @@ function AdminView({
   >("idle");
   const [articleCreateMessage, setArticleCreateMessage] = useState("");
   const [selectedBlockId, setSelectedBlockId] = useState("");
+  const [manualClipActive, setManualClipActive] = useState(false);
   const [blockType, setBlockType] = useState<ArticleBlockType>("article");
   const [blockStatus, setBlockStatus] = useState<ArticleBlockStatus>("draft");
   const [blockLabel, setBlockLabel] = useState("Manual block");
@@ -1626,6 +1629,10 @@ function AdminView({
   const [blockHeight, setBlockHeight] = useState(18);
   const [hideClips, setHideClips] = useState(false);
   const [clipZoom, setClipZoom] = useState(1);
+  const [sidebarTab, setSidebarTab] = useState<"pages" | "clips">("pages");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sectionPanelOpen, setSectionPanelOpen] = useState(true);
+  const [clipDrawMode, setClipDrawMode] = useState(true);
   const [blockSaveStatus, setBlockSaveStatus] = useState<
     "idle" | "saving" | "success" | "error"
   >("idle");
@@ -1677,9 +1684,16 @@ function AdminView({
   );
   const selectedBlock =
     (selectedBlockId
-      ? workspaceBlocks.find((block) => block.id === selectedBlockId)
+      ? workspaceBlocks.find(
+          (block) => block.id === selectedBlockId && block.pageId === selectedArticlePage?.id,
+        )
       : null) ?? null;
-  const activeClipOverlay = selectedArticlePage
+  const selectedPageIndex =
+    previewEdition?.pages.findIndex((page) => page.id === selectedArticlePage?.id) ?? -1;
+  const totalPreviewPages = previewEdition?.pages.length ?? 0;
+  const showManualClipOverlay =
+    manualClipActive && blockMessage.startsWith("Manual block started");
+  const activeClipOverlay = selectedArticlePage && (selectedBlock || showManualClipOverlay)
     ? {
         id: selectedBlock?.id ?? "manual-draft",
         label: blockLabel,
@@ -1708,6 +1722,20 @@ function AdminView({
   const currentWorkflowPosts = currentWorkflowEdition
     ? publisherArticles.filter((article) => article.editionId === currentWorkflowEdition.id)
     : [];
+  const currentWorkflowHasPages = Boolean(
+    currentWorkflowEdition?.pages.some((page) => page.imageUrl),
+  );
+  const currentWorkflowNextAction = !currentWorkflowEdition
+    ? "Upload a PDF or page image to start."
+    : currentWorkflowEdition.status === "processing"
+      ? "PaperLoop is processing pages and AI blocks. This panel refreshes automatically."
+      : !currentWorkflowHasPages
+        ? "Run smart processing so pages and AI block suggestions appear."
+        : currentWorkflowBlocks.length === 0
+          ? "Refresh after processing, or draw a manual block on the page."
+          : currentWorkflowPosts.length === 0
+            ? "Open Preview, select a block, correct its rectangle/text, then create an article post."
+            : "Review saved posts, publish the edition, then readers can open hotspots and engage.";
   const workspaceCampaigns = useMemo(
     () => [
       ...createdCampaigns,
@@ -1817,9 +1845,7 @@ function AdminView({
     };
   }, [workspacePublisherIds]);
 
-  async function handleDraftSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function handleDraftUpload() {
     if (!authUser || !sourceFile) {
       setUploadStatus("error");
       setUploadMessage("Sign in and choose a PDF or page image before uploading.");
@@ -1994,7 +2020,7 @@ function AdminView({
       );
       setPreviewEditionId(updatedEdition.id);
       setArticlePageId(updatedEdition.pages[0]?.id ?? "");
-      setArticleSection(updatedEdition.pages[0]?.section ?? articleSection);
+      resetArticleBlockForm(updatedEdition.pages[0]?.section ?? articleSection);
       setWorkflowStatus("success");
       setWorkflowMessage("Preview pages generated for staff review.");
     } catch (error) {
@@ -2037,6 +2063,7 @@ function AdminView({
       );
       setPreviewEditionId(processingEdition.id);
       setArticlePageId("");
+      resetArticleBlockForm();
       setWorkflowStatus("success");
       setWorkflowMessage(
         "Smart processing queued. Use Refresh workspace after a few seconds to load page images and AI blocks.",
@@ -2051,8 +2078,53 @@ function AdminView({
     }
   }
 
+  function selectPreviewPage(pageId: string) {
+    const nextPage = previewEdition?.pages.find((page) => page.id === pageId);
+
+    setArticlePageId(pageId);
+
+    if (nextPage) {
+      resetArticleBlockForm(nextPage.section);
+    }
+  }
+
+  function goToPreviewPageIndex(nextIndex: number) {
+    if (!previewEdition || previewEdition.pages.length === 0) {
+      return;
+    }
+
+    const boundedIndex = Math.max(
+      0,
+      Math.min(previewEdition.pages.length - 1, nextIndex),
+    );
+
+    selectPreviewPage(previewEdition.pages[boundedIndex].id);
+  }
+
+  function resetArticleBlockForm(section = "मुख पृष्ठ") {
+    setSelectedBlockId("");
+    setManualClipActive(false);
+    setBlockType("article");
+    setBlockStatus("draft");
+    setBlockLabel("Manual block");
+    setArticleTitle("");
+    setArticleSection(section);
+    setArticleSummary("");
+    setArticleBody("");
+    setArticleHotspotLabel("Manual block");
+    setBlockX(8);
+    setBlockY(16);
+    setBlockWidth(34);
+    setBlockHeight(18);
+    setBlockSaveStatus("idle");
+    setBlockMessage("");
+    setArticleCreateStatus("idle");
+    setArticleCreateMessage("");
+  }
+
   function handleClipSurfaceClick(event: MouseEvent<HTMLDivElement>) {
     if (
+      !clipDrawMode ||
       !previewEdition ||
       !selectedArticlePage ||
       (event.target as HTMLElement).closest(".clip-block")
@@ -2065,6 +2137,7 @@ function AdminView({
     const y = ((event.clientY - rect.top) / rect.height) * 100;
 
     setSelectedBlockId("");
+    setManualClipActive(true);
     setBlockType("article");
     setBlockStatus("draft");
     setBlockLabel("Manual block");
@@ -2090,6 +2163,7 @@ function AdminView({
     const geometry = normalizeBlockGeometry(block);
 
     setSelectedBlockId(block.id);
+    setManualClipActive(false);
     setBlockType(block.type);
     setBlockStatus(block.status === "suggested" ? "accepted" : block.status);
     setBlockLabel(block.label);
@@ -2159,6 +2233,7 @@ function AdminView({
 
       setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, nextBlock));
       setSelectedBlockId(nextBlock.id);
+      setManualClipActive(false);
       setBlockSaveStatus("success");
       setBlockMessage("Block draft saved.");
     } catch (error) {
@@ -2549,14 +2624,14 @@ function AdminView({
 
   return (
     <section className="admin-layout">
-      <div className="admin-hero">
+      <div className="admin-hero compact">
         <div>
           <span className="eyebrow">Publisher dashboard</span>
-          <h1>Upload, clip, publish, track reach, and manage advertiser campaigns.</h1>
+          <h1>Edition studio — upload pages, clip sections, publish posts.</h1>
         </div>
-        <a href="#edition-upload" className="admin-action">
+        <a href="#edition-studio" className="admin-action">
           <FileUp size={18} />
-          New edition upload
+          Open edition studio
         </a>
       </div>
 
@@ -2571,108 +2646,720 @@ function AdminView({
       </div>
 
       <div className="admin-grid">
-        <section className="workspace-panel" id="edition-upload">
-          <div className="section-heading compact">
-            <span className="eyebrow">Publisher workspace</span>
-            <h2>New edition draft</h2>
-          </div>
-          {accessiblePublishers.length === 0 ? (
-            <p className="empty-state">No publisher workspace is assigned to this account.</p>
-          ) : (
-            <form className="edition-form" onSubmit={handleDraftSubmit}>
-              <div className="form-grid">
-                <label>
-                  <span>Publisher</span>
-                  <select
-                    value={selectedDraftPublisherId}
-                    onChange={(event) => {
-                      const nextPublisher = accessiblePublishers.find(
-                        (publisher) => publisher.id === event.target.value,
-                      );
+        <section className="workspace-panel edition-studio" id="edition-studio">
+          <div className="edition-studio-bar">
+            <div className="edition-studio-bar-main">
+              {accessiblePublishers.length === 0 ? (
+                <p className="empty-state">No publisher workspace is assigned to this account.</p>
+              ) : (
+                <>
+                  <label className="studio-field">
+                    <span>Publisher</span>
+                    <select
+                      value={selectedDraftPublisherId}
+                      onChange={(event) => {
+                        const nextPublisher = accessiblePublishers.find(
+                          (publisher) => publisher.id === event.target.value,
+                        );
 
-                      setDraftPublisherId(event.target.value);
+                        setDraftPublisherId(event.target.value);
 
-                      if (nextPublisher) {
-                        setDraftCity(nextPublisher.city);
-                        setDraftLanguage(nextPublisher.language);
-                      }
-                    }}
+                        if (nextPublisher) {
+                          setDraftCity(nextPublisher.city);
+                          setDraftLanguage(nextPublisher.language);
+                        }
+                      }}
+                    >
+                      {accessiblePublishers.map((publisher) => (
+                        <option key={publisher.id} value={publisher.id}>
+                          {publisher.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="studio-field">
+                    <span>Edition date</span>
+                    <input
+                      type="date"
+                      value={draftDate}
+                      onChange={(event) => setDraftDate(event.target.value)}
+                    />
+                  </label>
+                  <label className="studio-field">
+                    <span>Title</span>
+                    <input
+                      value={draftTitle}
+                      onChange={(event) => setDraftTitle(event.target.value)}
+                      placeholder="Today edition"
+                    />
+                  </label>
+                  <label className="studio-field studio-field-upload">
+                    <span>Upload PDF or page image</span>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="studio-upload-btn"
+                    disabled={uploadStatus === "uploading" || !sourceFile}
+                    onClick={() => void handleDraftUpload()}
                   >
-                    {accessiblePublishers.map((publisher) => (
-                      <option key={publisher.id} value={publisher.id}>
-                        {publisher.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Title</span>
-                  <input
-                    value={draftTitle}
-                    onChange={(event) => setDraftTitle(event.target.value)}
-                    placeholder="Narmada Times - Jabalpur"
-                  />
-                </label>
-                <label>
-                  <span>Date</span>
-                  <input
-                    type="date"
-                    value={draftDate}
-                    onChange={(event) => setDraftDate(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>City</span>
-                  <input
-                    value={draftCity}
-                    onChange={(event) => setDraftCity(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Language</span>
-                  <input
-                    value={draftLanguage}
-                    onChange={(event) => setDraftLanguage(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Access</span>
-                  <select
-                    value={draftAccessRule}
-                    onChange={(event) =>
-                      setDraftAccessRule(event.target.value as AccessRule)
-                    }
-                  >
-                    <option value="public">Public</option>
-                    <option value="subscriber_only">Subscriber only</option>
-                    <option value="staff_only">Staff only</option>
-                  </select>
-                </label>
-              </div>
-              <label>
-                <span>Sections</span>
-                <input
-                  value={draftSections}
-                  onChange={(event) => setDraftSections(event.target.value)}
-                  placeholder="मुख पृष्ठ, शहर, बिज़नेस"
-                />
+                    <FileUp size={16} />
+                    {uploadStatus === "uploading" ? "Uploading..." : "Upload"}
+                  </button>
+                  <details className="studio-advanced-fields">
+                    <summary>Edition defaults</summary>
+                    <div className="studio-advanced-grid">
+                      <label className="studio-field">
+                        <span>City</span>
+                        <input
+                          value={draftCity}
+                          onChange={(event) => setDraftCity(event.target.value)}
+                        />
+                      </label>
+                      <label className="studio-field">
+                        <span>Language</span>
+                        <input
+                          value={draftLanguage}
+                          onChange={(event) => setDraftLanguage(event.target.value)}
+                        />
+                      </label>
+                      <label className="studio-field">
+                        <span>Access</span>
+                        <select
+                          value={draftAccessRule}
+                          onChange={(event) =>
+                            setDraftAccessRule(event.target.value as AccessRule)
+                          }
+                        >
+                          <option value="public">Public</option>
+                          <option value="subscriber_only">Subscriber only</option>
+                          <option value="staff_only">Staff only</option>
+                        </select>
+                      </label>
+                      <label className="studio-field studio-field-wide">
+                        <span>Sections</span>
+                        <input
+                          value={draftSections}
+                          onChange={(event) => setDraftSections(event.target.value)}
+                          placeholder="मुख पृष्ठ, शहर"
+                        />
+                      </label>
+                    </div>
+                  </details>
+                </>
+              )}
+            </div>
+            <div className="edition-studio-bar-actions">
+              <label className="studio-field">
+                <span>Open edition</span>
+                <select
+                  value={previewEditionId}
+                  onChange={(event) => {
+                    const edition = reviewQueue.find(
+                      (item) => item.id === event.target.value,
+                    );
+
+                    setPreviewEditionId(event.target.value);
+                    const nextPage =
+                      edition?.pages.find((page) => page.imageUrl) ?? edition?.pages[0];
+                    setArticlePageId(nextPage?.id ?? "");
+                    resetArticleBlockForm(nextPage?.section ?? articleSection);
+                  }}
+                >
+                  <option value="">Select edition...</option>
+                  {reviewQueue.map((edition) => (
+                    <option key={edition.id} value={edition.id}>
+                      {edition.title} • {edition.date} • {formatRole(edition.status)}
+                    </option>
+                  ))}
+                </select>
               </label>
-              <label>
-                <span>Source PDF or page image</span>
-                <input
-                  type="file"
-                  accept="application/pdf,image/png,image/jpeg,image/webp"
-                  onChange={handleFileChange}
-                />
-              </label>
-              <button disabled={uploadStatus === "uploading"}>
-                <FileUp size={18} />
-                {uploadStatus === "uploading" ? "Uploading..." : "Upload draft"}
+              <button
+                type="button"
+                className="studio-icon-btn"
+                onClick={() => setWorkspaceRefreshKey((currentKey) => currentKey + 1)}
+              >
+                Refresh
               </button>
+              {previewEdition && (
+                <>
+                  {previewEdition.status === "published" ? (
+                    <button
+                      type="button"
+                      className="studio-icon-btn"
+                      disabled={workflowEditionId === previewEdition.id}
+                      onClick={() => handleEditionStatusChange(previewEdition, "review")}
+                    >
+                      Send to review
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="studio-primary-btn"
+                      disabled={
+                        workflowEditionId === previewEdition.id ||
+                        !previewEdition.pages.some((page) => page.imageUrl || page.headline)
+                      }
+                      onClick={() => handleEditionStatusChange(previewEdition, "published")}
+                    >
+                      Publish edition
+                    </button>
+                  )}
+                  {Boolean(previewEdition.sourceAssetPath) &&
+                    !previewEdition.pages.some((page) => page.imageUrl) && (
+                      <button
+                        type="button"
+                        className="studio-icon-btn"
+                        disabled={
+                          workflowEditionId === previewEdition.id ||
+                          previewEdition.status === "processing"
+                        }
+                        onClick={() => handleRequestSmartProcessing(previewEdition)}
+                      >
+                        {previewEdition.status === "processing"
+                          ? "Processing..."
+                          : "Run processing"}
+                      </button>
+                    )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {(uploadMessage || workflowMessage) && (
+            <div className="edition-studio-feedback">
               {uploadMessage && (
                 <p className={`action-feedback ${uploadStatus}`}>{uploadMessage}</p>
               )}
-            </form>
+              {workflowMessage && (
+                <p className={`action-feedback ${workflowStatus}`}>{workflowMessage}</p>
+              )}
+            </div>
+          )}
+
+          <div className="edition-studio-workflow">
+            {currentWorkflowEdition ? (
+              <div className="workflow-focus-card compact">
+                <div>
+                  <span className="status-chip">{formatRole(currentWorkflowEdition.status)}</span>
+                  <strong>{currentWorkflowEdition.title}</strong>
+                  <p>
+                    {currentWorkflowEdition.city} • {currentWorkflowEdition.date} •{" "}
+                    {currentWorkflowBlocks.length} blocks • {currentWorkflowPosts.length} posts
+                  </p>
+                </div>
+                <p>{currentWorkflowNextAction}</p>
+              </div>
+            ) : (
+              <p className="empty-state">Upload an edition to start clipping sections.</p>
+            )}
+            <div className="timeline compact-timeline">
+              {[
+                { label: "Upload", done: Boolean(currentWorkflowEdition) },
+                { label: "Process", done: currentWorkflowHasPages },
+                { label: "Clip sections", done: currentWorkflowBlocks.length > 0 },
+                { label: "Create posts", done: currentWorkflowPosts.length > 0 },
+                { label: "Publish", done: currentWorkflowEdition?.status === "published" },
+              ].map((step) => (
+                <div className={`timeline-step ${step.done ? "done" : ""}`} key={step.label}>
+                  <CheckCircle2 size={16} />
+                  <span>{step.label}</span>
+                  <small>{step.done ? "Done" : "Next"}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {previewEdition && previewEdition.pages.length > 0 ? (
+            <div className={`edition-studio-workspace ${sidebarCollapsed ? "rail-collapsed" : ""} ${sectionPanelOpen ? "" : "panel-collapsed"}`}>
+              <aside className={`clip-rail ${sidebarCollapsed ? "collapsed" : ""}`}>
+                <div className="clip-rail-header">
+                  <div className="clip-tabs">
+                    <button
+                      type="button"
+                      className={sidebarTab === "pages" ? "active" : ""}
+                      onClick={() => setSidebarTab("pages")}
+                    >
+                      Pages
+                    </button>
+                    <button
+                      type="button"
+                      className={sidebarTab === "clips" ? "active" : ""}
+                      onClick={() => setSidebarTab("clips")}
+                    >
+                      Page clips
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="rail-collapse-btn"
+                    aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  >
+                    {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                  </button>
+                </div>
+
+                {!sidebarCollapsed && sidebarTab === "pages" && (
+                  <>
+                    <div className="page-thumb-list">
+                      {previewEdition.pages.map((page) => (
+                        <button
+                          type="button"
+                          className={`page-thumb ${page.id === selectedArticlePage?.id ? "active" : ""}`}
+                          key={page.id}
+                          onClick={() => selectPreviewPage(page.id)}
+                        >
+                          {page.thumbnailUrl || page.imageUrl ? (
+                            <img
+                              src={page.thumbnailUrl ?? page.imageUrl}
+                              alt={`Page ${page.pageNumber}`}
+                            />
+                          ) : (
+                            <Newspaper size={22} />
+                          )}
+                          <span>Page {page.pageNumber}</span>
+                          <small>{page.section}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="page-add-upload">
+                      <FileUp size={14} />
+                      <span>Add pages (PDF or image)</span>
+                      <input
+                        type="file"
+                        accept="application/pdf,image/png,image/jpeg,image/webp"
+                        onChange={handleFileChange}
+                      />
+                    </label>
+                  </>
+                )}
+
+                {!sidebarCollapsed && sidebarTab === "clips" && (
+                  <div className="clip-list">
+                    {selectedPageBlocks.length === 0 && (
+                      <p className="empty-state">Click Clip, then draw a rectangle on the page.</p>
+                    )}
+                    {selectedPageBlocks.map((block) => (
+                      <button
+                        type="button"
+                        className={block.id === selectedBlock?.id ? "active" : ""}
+                        key={block.id}
+                        onClick={() => handleSelectBlock(block)}
+                      >
+                        <strong>{block.label}</strong>
+                        <span>
+                          {formatRole(block.type)} • {formatRole(block.status)}
+                        </span>
+                        {block.clippedImageUrl && <small>Post saved</small>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </aside>
+
+              <div className="edition-studio-stage">
+                <div className="clip-toolbar studio-toolbar">
+                  <div className="studio-toolbar-group">
+                    <button type="button" onClick={() => setHideClips(!hideClips)}>
+                      {hideClips ? "Show clips" : "Hide clips"}
+                    </button>
+                    <button
+                      type="button"
+                      className={clipDrawMode ? "active" : ""}
+                      onClick={() => setClipDrawMode(!clipDrawMode)}
+                    >
+                      Clip
+                    </button>
+                  </div>
+                  <div className="studio-toolbar-group pagination-controls">
+                    <button
+                      type="button"
+                      aria-label="First page"
+                      disabled={selectedPageIndex <= 0}
+                      onClick={() => goToPreviewPageIndex(0)}
+                    >
+                      <ChevronsLeft size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Previous page"
+                      disabled={selectedPageIndex <= 0}
+                      onClick={() => goToPreviewPageIndex(selectedPageIndex - 1)}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <label className="page-jump">
+                      <span className="sr-only">Current page</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalPreviewPages || 1}
+                        value={selectedPageIndex >= 0 ? selectedPageIndex + 1 : 1}
+                        onChange={(event) =>
+                          goToPreviewPageIndex(Number(event.target.value) - 1)
+                        }
+                      />
+                      <span>of {totalPreviewPages}</span>
+                    </label>
+                    <button
+                      type="button"
+                      aria-label="Next page"
+                      disabled={selectedPageIndex >= totalPreviewPages - 1}
+                      onClick={() => goToPreviewPageIndex(selectedPageIndex + 1)}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Last page"
+                      disabled={selectedPageIndex >= totalPreviewPages - 1}
+                      onClick={() => goToPreviewPageIndex(totalPreviewPages - 1)}
+                    >
+                      <ChevronsRight size={16} />
+                    </button>
+                  </div>
+                  <div className="studio-toolbar-group zoom-controls">
+                    <span>Zoom</span>
+                    <button type="button" onClick={() => setClipZoom(Math.max(0.6, clipZoom - 0.1))}>
+                      <ZoomOut size={16} />
+                    </button>
+                    <input
+                      type="range"
+                      min="60"
+                      max="140"
+                      step="5"
+                      value={Math.round(clipZoom * 100)}
+                      onChange={(event) => setClipZoom(Number(event.target.value) / 100)}
+                    />
+                    <span>{Math.round(clipZoom * 100)}%</span>
+                    <button type="button" onClick={() => setClipZoom(1)}>
+                      Fit
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="section-panel-toggle"
+                    onClick={() => setSectionPanelOpen(!sectionPanelOpen)}
+                  >
+                    {sectionPanelOpen ? "Hide details" : "Show details"}
+                  </button>
+                </div>
+
+                {selectedArticlePage && (
+                  <div className="clip-stage-wrap">
+                    <div
+                      className={`clip-stage ${clipDrawMode ? "draw-mode" : ""}`}
+                      style={{ transform: `scale(${clipZoom})` }}
+                      onClick={handleClipSurfaceClick}
+                    >
+                      {selectedArticlePage.imageUrl ? (
+                        <img
+                          src={selectedArticlePage.imageUrl}
+                          alt={`Page ${selectedArticlePage.pageNumber}`}
+                        />
+                      ) : (
+                        <div className="clip-placeholder-page">
+                          <strong>{selectedArticlePage.headline}</strong>
+                          <p>{selectedArticlePage.subhead}</p>
+                        </div>
+                      )}
+                      {!hideClips &&
+                        selectedPageBlocks
+                          .filter((block) => block.id !== selectedBlockId)
+                          .map((block) => (
+                            <button
+                              type="button"
+                              className="clip-block"
+                              key={block.id}
+                              style={{
+                                left: `${block.x}%`,
+                                top: `${block.y}%`,
+                                width: `${block.width}%`,
+                                height: `${block.height}%`,
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleSelectBlock(block);
+                              }}
+                            >
+                              <span>{block.label}</span>
+                            </button>
+                          ))}
+                      {!hideClips && activeClipOverlay && (
+                        <button
+                          type="button"
+                          className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
+                          style={{
+                            left: `${activeClipOverlay.x}%`,
+                            top: `${activeClipOverlay.y}%`,
+                            width: `${activeClipOverlay.width}%`,
+                            height: `${activeClipOverlay.height}%`,
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <span>{activeClipOverlay.label}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {sectionPanelOpen && selectedArticlePage && (
+                <aside className="section-panel">
+                  <div className="section-panel-header">
+                    <strong>Section post</strong>
+                    <span>Page {selectedArticlePage.pageNumber}</span>
+                  </div>
+                  <form className="article-block-form compact" onSubmit={handleArticleBlockSubmit}>
+                    {selectedBlock?.clippedImageUrl && (
+                      <figure className="saved-clip-preview">
+                        <img src={selectedBlock.clippedImageUrl} alt={selectedBlock.title} />
+                        <figcaption>Saved clipping</figcaption>
+                      </figure>
+                    )}
+                    <div className="form-grid">
+                      <label>
+                        <span>Type</span>
+                        <select
+                          value={blockType}
+                          onChange={(event) =>
+                            setBlockType(event.target.value as ArticleBlockType)
+                          }
+                        >
+                          {blockTypes.map((type) => (
+                            <option key={type} value={type}>
+                              {formatRole(type)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>Section</span>
+                        <input
+                          value={articleSection}
+                          onChange={(event) => setArticleSection(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span>Title</span>
+                        <input
+                          value={articleTitle}
+                          onChange={(event) => setArticleTitle(event.target.value)}
+                          placeholder="Headline"
+                        />
+                      </label>
+                      <label>
+                        <span>Hotspot label</span>
+                        <input
+                          value={blockLabel}
+                          onChange={(event) => {
+                            setBlockLabel(event.target.value);
+                            setArticleHotspotLabel(event.target.value);
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <details className="section-panel-advanced">
+                      <summary>Rectangle &amp; advanced fields</summary>
+                      <div className="form-grid geometry-grid">
+                        <label>
+                          <span>X%</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={blockX}
+                            onChange={(event) =>
+                              updateBlockGeometry({ x: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Y%</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={blockY}
+                            onChange={(event) =>
+                              updateBlockGeometry({ y: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Width%</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            step="0.1"
+                            value={blockWidth}
+                            onChange={(event) =>
+                              updateBlockGeometry({ width: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>Height%</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            step="0.1"
+                            value={blockHeight}
+                            onChange={(event) =>
+                              updateBlockGeometry({ height: Number(event.target.value) })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <label>
+                        <span>Summary</span>
+                        <textarea
+                          value={articleSummary}
+                          onChange={(event) => setArticleSummary(event.target.value)}
+                          rows={3}
+                        />
+                      </label>
+                      <label>
+                        <span>Body</span>
+                        <textarea
+                          value={articleBody}
+                          onChange={(event) => setArticleBody(event.target.value)}
+                          rows={4}
+                        />
+                      </label>
+                      <label>
+                        <span>Author</span>
+                        <input
+                          value={articleAuthorName}
+                          onChange={(event) => setArticleAuthorName(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        <span>Access</span>
+                        <select
+                          value={articleAccessRule}
+                          onChange={(event) =>
+                            setArticleAccessRule(event.target.value as AccessRule)
+                          }
+                        >
+                          <option value="public">Public</option>
+                          <option value="subscriber_only">Subscriber only</option>
+                          <option value="staff_only">Staff only</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Discussion</span>
+                        <select
+                          value={articleDiscussionRule}
+                          onChange={(event) =>
+                            setArticleDiscussionRule(event.target.value as DiscussionRule)
+                          }
+                        >
+                          <option value="logged_in">Logged-in readers</option>
+                          <option value="subscriber_only">Subscribers only</option>
+                          <option value="disabled">Disabled</option>
+                          <option value="locked">Locked</option>
+                        </select>
+                      </label>
+                    </details>
+                    <div className="section-panel-actions">
+                      <button type="button" disabled={blockSaveStatus === "saving"} onClick={handleSaveBlockDraft}>
+                        {blockSaveStatus === "saving" ? "Saving..." : "Save section"}
+                      </button>
+                      <button type="submit" disabled={articleCreateStatus === "saving"}>
+                        {articleCreateStatus === "saving" ? "Creating..." : "Create post"}
+                      </button>
+                      {selectedBlock && selectedBlock.status !== "published" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleBlockDecision(
+                              selectedBlock,
+                              selectedBlock.status === "rejected" ? "accepted" : "rejected",
+                            )
+                          }
+                        >
+                          {selectedBlock.status === "rejected" ? "Accept" : "Reject"}
+                        </button>
+                      )}
+                    </div>
+                    {blockMessage && (
+                      <p className={`action-feedback ${blockSaveStatus}`}>{blockMessage}</p>
+                    )}
+                    {articleCreateMessage && (
+                      <p className={`action-feedback ${articleCreateStatus}`}>
+                        {articleCreateMessage}
+                      </p>
+                    )}
+                  </form>
+                  {currentWorkflowPosts.length > 0 && (
+                    <div className="created-post-strip compact">
+                      <strong>Saved posts for this edition</strong>
+                      <div>
+                        {currentWorkflowPosts.map((article) => (
+                          <article key={article.id}>
+                            {article.clippedImageUrl && (
+                              <img src={article.clippedImageUrl} alt={article.title} />
+                            )}
+                            <span>{article.title}</span>
+                            <small>
+                              Page {article.pageNumber} • {formatRole(article.status)}
+                            </small>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </aside>
+              )}
+            </div>
+          ) : (
+            <div className="edition-studio-empty">
+              {workspaceStatus === "error" ? (
+                <p className="empty-state">Unable to load workspace editions.</p>
+              ) : reviewQueue.length === 0 ? (
+                <p className="empty-state">
+                  Choose a date and upload a PDF or page image to begin clipping sections.
+                </p>
+              ) : previewEdition ? (
+                <div className="edition-studio-empty-actions">
+                  <p className="empty-state">
+                    {previewEdition.status === "processing"
+                      ? "Smart processing is running. This view refreshes automatically."
+                      : "Run smart processing to generate page images before clipping."}
+                  </p>
+                  {!previewEdition.pages.some((page) => page.imageUrl) && (
+                    <button
+                      type="button"
+                      className="studio-primary-btn"
+                      disabled={
+                        workflowEditionId === previewEdition.id ||
+                        previewEdition.status === "processing"
+                      }
+                      onClick={() =>
+                        previewEdition.sourceAssetPath
+                          ? handleRequestSmartProcessing(previewEdition)
+                          : handleGeneratePreviewPages(previewEdition)
+                      }
+                    >
+                      {previewEdition.sourceAssetPath
+                        ? "Run smart processing"
+                        : "Generate demo preview"}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+            </div>
           )}
         </section>
 
@@ -2784,30 +3471,67 @@ function AdminView({
           </section>
         )}
 
-        <section className="workspace-panel">
+        <section className="workspace-panel strategy-panel">
           <div className="section-heading compact">
-            <span className="eyebrow">Review workflow</span>
-            <h2>Issue processing</h2>
+            <span className="eyebrow">Content strategy</span>
+            <h2>Optimization signals</h2>
           </div>
-          <div className="timeline">
-            {[
-              "Edition metadata captured",
-              "PDF/page images uploaded",
-              "Staff review queue",
-              "Edition published",
-              "Article hotspots clipped",
-              "OCR text corrected",
-            ].map((step, index) => (
-              <div className="timeline-step" key={step}>
-                <CheckCircle2 size={18} />
-                <span>{step}</span>
-                <small>{index < 4 ? "Done" : "Next"}</small>
-              </div>
-            ))}
+          <div className="insight-grid">
+            <Insight icon={<TrendingUp size={20} />} title="High reach" text="Civic stories drive 31% more shares than average." />
+            <Insight icon={<MessageCircle size={20} />} title="Feedback" text="Parents ask for school-wise safety lists." />
+            <Insight icon={<CircleDollarSign size={20} />} title="Revenue" text="Education ads convert best beside subscriber-only stories." />
           </div>
         </section>
 
-        <section className="workspace-panel">
+        <section className="workspace-panel strategy-panel">
+          <div className="section-heading compact">
+            <span className="eyebrow">Article performance</span>
+            <h2>Blocks, comments, likes, shares, and views</h2>
+          </div>
+          <div className="article-admin-table">
+            {publisherArticles.slice(0, 8).map((article) => (
+              <article key={article.id}>
+                {article.clippedImageUrl && (
+                  <img src={article.clippedImageUrl} alt={article.title} />
+                )}
+                <div>
+                  <strong>{article.title}</strong>
+                  <span>
+                    {article.section} • Page {article.pageNumber} •{" "}
+                    {formatRole(article.status)}
+                  </span>
+                </div>
+                <small>
+                  {article.stats.views.toLocaleString()} views •{" "}
+                  {(article.stats.likes ?? article.stats.saves).toLocaleString()} likes •{" "}
+                  {article.stats.saves.toLocaleString()} saves •{" "}
+                  {article.stats.shares.toLocaleString()} shares •{" "}
+                  {article.stats.comments} comments
+                </small>
+              </article>
+            ))}
+            {publisherArticles.length === 0 && (
+              <p className="empty-state">Published article blocks will appear here.</p>
+            )}
+          </div>
+          <div className="comment-moderation-list">
+            <h3>Latest comments and reports</h3>
+            {workspaceComments.slice(0, 5).map((comment) => (
+              <article className="comment-card" key={comment.id}>
+                <div>
+                  <strong>{comment.userName}</strong>
+                  <span>{comment.status}</span>
+                </div>
+                <p>{comment.body}</p>
+              </article>
+            ))}
+            {workspaceComments.length === 0 && (
+              <p className="empty-state">No article comments for this publisher yet.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="workspace-panel campaigns-panel" id="targeted-campaigns">
           <div className="section-heading compact">
             <span className="eyebrow">Targeted campaigns</span>
             <h2>Advertiser placements</h2>
@@ -2891,561 +3615,10 @@ function AdminView({
             )}
           </div>
         </section>
-
-        <section className="workspace-panel strategy-panel">
-          <div className="section-heading compact">
-            <span className="eyebrow">Content strategy</span>
-            <h2>Optimization signals</h2>
-          </div>
-          <div className="insight-grid">
-            <Insight icon={<TrendingUp size={20} />} title="High reach" text="Civic stories drive 31% more shares than average." />
-            <Insight icon={<MessageCircle size={20} />} title="Feedback" text="Parents ask for school-wise safety lists." />
-            <Insight icon={<CircleDollarSign size={20} />} title="Revenue" text="Education ads convert best beside subscriber-only stories." />
-          </div>
-        </section>
-
-        <section className="workspace-panel strategy-panel">
-          <div className="section-heading compact">
-            <span className="eyebrow">Article performance</span>
-            <h2>Blocks, comments, likes, shares, and views</h2>
-          </div>
-          <div className="article-admin-table">
-            {publisherArticles.slice(0, 8).map((article) => (
-              <article key={article.id}>
-                <div>
-                  <strong>{article.title}</strong>
-                  <span>
-                    {article.section} • Page {article.pageNumber} •{" "}
-                    {formatRole(article.status)}
-                  </span>
-                </div>
-                <small>
-                  {article.stats.views.toLocaleString()} views •{" "}
-                  {(article.stats.likes ?? article.stats.saves).toLocaleString()} likes •{" "}
-                  {article.stats.saves.toLocaleString()} saves •{" "}
-                  {article.stats.shares.toLocaleString()} shares •{" "}
-                  {article.stats.comments} comments
-                </small>
-              </article>
-            ))}
-            {publisherArticles.length === 0 && (
-              <p className="empty-state">Published article blocks will appear here.</p>
-            )}
-          </div>
-          <div className="comment-moderation-list">
-            <h3>Latest comments and reports</h3>
-            {workspaceComments.slice(0, 5).map((comment) => (
-              <article className="comment-card" key={comment.id}>
-                <div>
-                  <strong>{comment.userName}</strong>
-                  <span>{comment.status}</span>
-                </div>
-                <p>{comment.body}</p>
-              </article>
-            ))}
-            {workspaceComments.length === 0 && (
-              <p className="empty-state">No article comments for this publisher yet.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="workspace-panel strategy-panel">
-          <div className="section-heading compact">
-            <span className="eyebrow">Edition review</span>
-            <h2>Review and publish queue</h2>
-          </div>
-          <div className="workspace-toolbar">
-            <button
-              type="button"
-              onClick={() => setWorkspaceRefreshKey((currentKey) => currentKey + 1)}
-            >
-              Refresh workspace
-            </button>
-            <span>
-              Smart processing creates page images, thumbnails, and AI suggested clips.
-            </span>
-          </div>
-          <div className="draft-list">
-            {workspaceStatus === "error" && (
-              <p className="empty-state">Unable to load workspace editions.</p>
-            )}
-            {reviewQueue.map((edition) => {
-              const canManageEdition = canManagePublisher(
-                profile,
-                userAccess,
-                edition.publisherId,
-              );
-              const isUpdating = workflowEditionId === edition.id;
-              const hasPreviewPages = edition.pages.length > 0;
-              const hasSmartPages = edition.pages.some((page) => page.imageUrl);
-              const needsSmartProcessing = Boolean(edition.sourceAssetPath) && !hasSmartPages;
-              const canPublishEdition =
-                hasPreviewPages && (!edition.sourceAssetPath || hasSmartPages);
-
-              return (
-                <article className="draft-card" key={edition.id}>
-                  <div>
-                    <strong>{edition.title}</strong>
-                    <span>
-                      {edition.city} • {edition.date} • {formatRole(edition.status)}
-                    </span>
-                    <small>
-                      {edition.sourceAssetName ?? "Metadata only"} •{" "}
-                      {hasPreviewPages
-                        ? `${edition.pages.length} page${edition.pages.length === 1 ? "" : "s"}${hasSmartPages ? " with image" : " placeholder"}`
-                        : edition.status === "processing"
-                          ? "Smart processing running"
-                          : "Smart processing pending"}
-                      {edition.processingError ? ` • ${edition.processingError}` : ""}
-                    </small>
-                  </div>
-                  <div className="draft-actions">
-                    {edition.sourceAssetUrl && (
-                      <a href={edition.sourceAssetUrl} target="_blank" rel="noreferrer">
-                        Source
-                      </a>
-                    )}
-                    {hasSmartPages || (!edition.sourceAssetPath && hasPreviewPages) ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPreviewEditionId(edition.id);
-                          setArticlePageId(edition.pages[0]?.id ?? "");
-                          setArticleSection(edition.pages[0]?.section ?? articleSection);
-                        }}
-                      >
-                        Preview
-                      </button>
-                    ) : needsSmartProcessing ? (
-                      <button
-                        type="button"
-                        disabled={!canManageEdition || isUpdating || edition.status === "processing"}
-                        onClick={() => handleRequestSmartProcessing(edition)}
-                        title="Queue Firebase Functions processing for the uploaded asset"
-                      >
-                        {edition.status === "processing"
-                          ? "Processing..."
-                          : isUpdating
-                            ? "Queueing..."
-                            : "Run smart processing"}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!canManageEdition || isUpdating}
-                        onClick={() => handleGeneratePreviewPages(edition)}
-                      >
-                        {isUpdating ? "Generating..." : "Generate demo preview"}
-                      </button>
-                    )}
-                    {edition.status === "published" ? (
-                      <button
-                        type="button"
-                        disabled={!canManageEdition || isUpdating}
-                        onClick={() => handleEditionStatusChange(edition, "review")}
-                      >
-                        Send to review
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!canManageEdition || isUpdating || !canPublishEdition}
-                        onClick={() => handleEditionStatusChange(edition, "published")}
-                        title={
-                          canPublishEdition
-                            ? "Publish edition"
-                            : "Wait for smart page images before publishing"
-                        }
-                      >
-                        {isUpdating ? "Publishing..." : "Publish"}
-                      </button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-            {reviewQueue.length === 0 && workspaceStatus !== "error" && (
-                <p className="empty-state">No draft editions uploaded yet.</p>
-            )}
-            {workflowMessage && (
-              <p className={`action-feedback ${workflowStatus}`}>{workflowMessage}</p>
-            )}
-          </div>
-          {previewEdition && previewEdition.pages.length > 0 && (
-            <div className="edition-preview-panel">
-              <div>
-                <span className="eyebrow">Staff preview</span>
-                <h3>{previewEdition.title}</h3>
-                <p>
-                  {previewEdition.city} • {previewEdition.date} •{" "}
-                  {previewEdition.pages.length} generated pages
-                </p>
-              </div>
-              <div className="preview-page-grid">
-                {previewEdition.pages.map((page) => (
-                  <article className="preview-page-card" key={page.id}>
-                    <span>Page {page.pageNumber}</span>
-                    <strong>{page.section}</strong>
-                    <h4>{page.headline}</h4>
-                    <p>{page.subhead}</p>
-                  </article>
-                ))}
-              </div>
-              {selectedArticlePage && (
-                <div className="clip-editor">
-                  <aside className="clip-rail">
-                    <div className="clip-tabs">
-                      <strong>Pages</strong>
-                      <span>Page clips</span>
-                    </div>
-                    {previewEdition.pages.map((page) => (
-                      <button
-                        type="button"
-                        className={page.id === selectedArticlePage.id ? "active" : ""}
-                        key={page.id}
-                        onClick={() => {
-                          setArticlePageId(page.id);
-                          setArticleSection(page.section);
-                        }}
-                      >
-                        {page.thumbnailUrl ? (
-                          <img src={page.thumbnailUrl} alt={`Page ${page.pageNumber}`} />
-                        ) : (
-                          <Newspaper size={24} />
-                        )}
-                        <span>Page {page.pageNumber}</span>
-                      </button>
-                    ))}
-                    <div className="clip-list">
-                      {selectedPageBlocks.map((block) => (
-                        <button
-                          type="button"
-                          className={block.id === selectedBlock?.id ? "active" : ""}
-                          key={block.id}
-                          onClick={() => handleSelectBlock(block)}
-                        >
-                          <strong>{block.label}</strong>
-                          <span>
-                            {formatRole(block.type)} • {formatRole(block.status)}
-                          </span>
-                          {block.clippedImageUrl && <small>Clipping saved</small>}
-                        </button>
-                      ))}
-                    </div>
-                  </aside>
-                  <div className="clip-stage-wrap">
-                    <div className="clip-toolbar">
-                      <button type="button" onClick={() => setHideClips(!hideClips)}>
-                        {hideClips ? "Show clips" : "Hide clips"}
-                      </button>
-                      <button type="button" onClick={() => setClipZoom(Math.max(0.7, clipZoom - 0.1))}>
-                        <ZoomOut size={16} />
-                      </button>
-                      <span>{Math.round(clipZoom * 100)}%</span>
-                      <button type="button" onClick={() => setClipZoom(Math.min(1.4, clipZoom + 0.1))}>
-                        <ZoomIn size={16} />
-                      </button>
-                      <button type="button" onClick={() => setClipZoom(1)}>
-                        Fit
-                      </button>
-                    </div>
-                    <div
-                      className="clip-stage"
-                      style={{ transform: `scale(${clipZoom})` }}
-                      onClick={handleClipSurfaceClick}
-                    >
-                      {selectedArticlePage.imageUrl ? (
-                        <img
-                          src={selectedArticlePage.imageUrl}
-                          alt={`Page ${selectedArticlePage.pageNumber}`}
-                        />
-                      ) : (
-                        <div className="clip-placeholder-page">
-                          <strong>{selectedArticlePage.headline}</strong>
-                          <p>{selectedArticlePage.subhead}</p>
-                        </div>
-                      )}
-                      {!hideClips &&
-                        selectedPageBlocks
-                          .filter((block) => block.id !== selectedBlockId)
-                          .map((block) => (
-                          <button
-                            type="button"
-                            className="clip-block"
-                            key={block.id}
-                            style={{
-                              left: `${block.x}%`,
-                              top: `${block.y}%`,
-                              width: `${block.width}%`,
-                              height: `${block.height}%`,
-                            }}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleSelectBlock(block);
-                            }}
-                          >
-                            <span>{block.label}</span>
-                          </button>
-                        ))}
-                      {!hideClips && activeClipOverlay && (
-                        <button
-                          type="button"
-                          className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
-                          style={{
-                            left: `${activeClipOverlay.x}%`,
-                            top: `${activeClipOverlay.y}%`,
-                            width: `${activeClipOverlay.width}%`,
-                            height: `${activeClipOverlay.height}%`,
-                          }}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <span>{activeClipOverlay.label}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <form className="article-block-form" onSubmit={handleArticleBlockSubmit}>
-                <div className="section-heading compact">
-                  <span className="eyebrow">Manual clipping</span>
-                  <h3>Review AI block or draw your own</h3>
-                </div>
-                {selectedBlock?.clippedImageUrl && (
-                  <figure className="saved-clip-preview">
-                    <img src={selectedBlock.clippedImageUrl} alt={selectedBlock.title} />
-                    <figcaption>Saved article clipping in Firebase Storage</figcaption>
-                  </figure>
-                )}
-                <div className="form-grid">
-                  <label>
-                    <span>Preview page</span>
-                    <select
-                      value={selectedArticlePage?.id ?? ""}
-                      onChange={(event) => {
-                        const nextPage = previewEdition.pages.find(
-                          (page) => page.id === event.target.value,
-                        );
-
-                        setArticlePageId(event.target.value);
-
-                        if (nextPage) {
-                          setArticleSection(nextPage.section);
-                        }
-                      }}
-                    >
-                      {previewEdition.pages.map((page) => (
-                        <option key={page.id} value={page.id}>
-                          Page {page.pageNumber} • {page.section}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Block type</span>
-                    <select
-                      value={blockType}
-                      onChange={(event) => setBlockType(event.target.value as ArticleBlockType)}
-                    >
-                      {blockTypes.map((type) => (
-                        <option key={type} value={type}>
-                          {formatRole(type)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Block status</span>
-                    <select
-                      value={blockStatus}
-                      onChange={(event) =>
-                        setBlockStatus(event.target.value as ArticleBlockStatus)
-                      }
-                    >
-                      <option value="accepted">Accepted</option>
-                      <option value="draft">Draft</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Section</span>
-                    <input
-                      value={articleSection}
-                      onChange={(event) => setArticleSection(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <span>Title</span>
-                    <input
-                      value={articleTitle}
-                      onChange={(event) => setArticleTitle(event.target.value)}
-                      placeholder="Readable article headline"
-                    />
-                  </label>
-                  <label>
-                    <span>Hotspot label</span>
-                    <input
-                      value={blockLabel}
-                      onChange={(event) => {
-                        setBlockLabel(event.target.value);
-                        setArticleHotspotLabel(event.target.value);
-                      }}
-                      placeholder="Open story"
-                    />
-                  </label>
-                  <label>
-                    <span>Author</span>
-                    <input
-                      value={articleAuthorName}
-                      onChange={(event) => setArticleAuthorName(event.target.value)}
-                      placeholder="Publisher Desk"
-                    />
-                  </label>
-                  <label>
-                    <span>Access</span>
-                    <select
-                      value={articleAccessRule}
-                      onChange={(event) =>
-                        setArticleAccessRule(event.target.value as AccessRule)
-                      }
-                    >
-                      <option value="public">Public</option>
-                      <option value="subscriber_only">Subscriber only</option>
-                      <option value="staff_only">Staff only</option>
-                    </select>
-                  </label>
-                </div>
-                <div className="form-grid geometry-grid">
-                  <label>
-                    <span>X%</span>
-                    <input
-	                      type="number"
-	                      min="0"
-	                      max="100"
-	                      step="0.1"
-	                      value={blockX}
-	                      onChange={(event) =>
-	                        updateBlockGeometry({ x: Number(event.target.value) })
-	                      }
-	                    />
-                  </label>
-                  <label>
-                    <span>Y%</span>
-                    <input
-	                      type="number"
-	                      min="0"
-	                      max="100"
-	                      step="0.1"
-	                      value={blockY}
-	                      onChange={(event) =>
-	                        updateBlockGeometry({ y: Number(event.target.value) })
-	                      }
-	                    />
-                  </label>
-                  <label>
-                    <span>Width%</span>
-                    <input
-	                      type="number"
-	                      min="1"
-	                      max="100"
-	                      step="0.1"
-	                      value={blockWidth}
-	                      onChange={(event) =>
-	                        updateBlockGeometry({ width: Number(event.target.value) })
-	                      }
-	                    />
-                  </label>
-                  <label>
-                    <span>Height%</span>
-                    <input
-	                      type="number"
-	                      min="1"
-	                      max="100"
-	                      step="0.1"
-	                      value={blockHeight}
-	                      onChange={(event) =>
-	                        updateBlockGeometry({ height: Number(event.target.value) })
-	                      }
-	                    />
-                  </label>
-                </div>
-                <label>
-                  <span>Summary</span>
-                  <textarea
-                    value={articleSummary}
-                    onChange={(event) => setArticleSummary(event.target.value)}
-                    placeholder="Short reader-facing summary"
-                  />
-                </label>
-                <label>
-                  <span>Body</span>
-                  <textarea
-                    value={articleBody}
-                    onChange={(event) => setArticleBody(event.target.value)}
-                    placeholder="Paste or type the cleaned article text"
-                    rows={6}
-                  />
-                </label>
-                <label>
-                  <span>Discussion access</span>
-                  <select
-                    value={articleDiscussionRule}
-                    onChange={(event) =>
-                      setArticleDiscussionRule(event.target.value as DiscussionRule)
-                    }
-                  >
-                    <option value="logged_in">Logged-in readers</option>
-                    <option value="subscriber_only">Subscribers only</option>
-                    <option value="disabled">Disabled</option>
-                    <option value="locked">Locked</option>
-                  </select>
-                </label>
-                <button disabled={articleCreateStatus === "saving"}>
-                  <Sparkles size={18} />
-                  {articleCreateStatus === "saving"
-                    ? "Creating article..."
-                    : "Create article block"}
-                </button>
-                <button
-                  type="button"
-                  disabled={blockSaveStatus === "saving"}
-                  onClick={handleSaveBlockDraft}
-                >
-                  <CheckCircle2 size={18} />
-                  {blockSaveStatus === "saving" ? "Saving block..." : "Save block draft"}
-                </button>
-                {selectedBlock && selectedBlock.status !== "published" && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleBlockDecision(
-                        selectedBlock,
-                        selectedBlock.status === "rejected" ? "accepted" : "rejected",
-                      )
-                    }
-                  >
-                    {selectedBlock.status === "rejected" ? "Accept block" : "Reject block"}
-                  </button>
-                )}
-                {blockMessage && (
-                  <p className={`action-feedback ${blockSaveStatus}`}>
-                    {blockMessage}
-                  </p>
-                )}
-                {articleCreateMessage && (
-                  <p className={`action-feedback ${articleCreateStatus}`}>
-                    {articleCreateMessage}
-                  </p>
-                )}
-              </form>
-            </div>
-          )}
-        </section>
       </div>
     </section>
   );
 }
-
 interface StatProps {
   icon: ReactNode;
   label: string;
