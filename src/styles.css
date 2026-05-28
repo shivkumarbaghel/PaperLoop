@@ -267,15 +267,26 @@ a {
 }
 
 main {
-  padding: 24px clamp(16px, 4vw, 48px) 48px;
+  padding: 20px 10px 48px;
+}
+
+main:has(.admin-layout) {
+  padding: 16px 25px 32px;
 }
 
 .page-grid,
 .reader-layout,
-.article-layout,
-.admin-layout {
+.article-layout {
   width: min(1440px, 100%);
   margin: 0 auto;
+}
+
+.admin-layout {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: grid;
+  gap: 12px;
 }
 
 .dashboard-grid {
@@ -1150,9 +1161,12 @@ main {
   margin: 4px 0 0;
 }
 
-.admin-layout {
-  display: grid;
-  gap: 18px;
+.admin-layout .workspace-panel {
+  padding: 10px 12px;
+}
+
+.admin-layout .metric-card {
+  padding: 12px;
 }
 
 .admin-hero {
@@ -1199,7 +1213,7 @@ main {
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
+  gap: 12px;
 }
 
 .edition-studio,
@@ -1208,7 +1222,7 @@ main {
 }
 
 .admin-hero.compact {
-  padding: 18px clamp(18px, 3vw, 28px);
+  padding: 12px 14px;
 }
 
 .admin-hero.compact h1 {
@@ -1218,14 +1232,14 @@ main {
 
 .edition-studio {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 8px;
 }
 
 .edition-studio-bar {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid rgba(43, 59, 52, 0.12);
   border-radius: 8px;
   background: #fffdf8;
@@ -1335,9 +1349,9 @@ main {
 .edition-studio-workspace {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr) 290px;
-  gap: 12px;
+  gap: 10px;
   min-height: 520px;
-  padding: 12px;
+  padding: 8px;
   border: 1px solid rgba(43, 59, 52, 0.12);
   border-radius: 8px;
   background: #eef0ee;
@@ -2264,7 +2278,7 @@ main {
 
 @media (max-width: 720px) {
   main {
-    padding-inline: 12px;
+    padding-inline: 10px;
   }
 
   .topbar {
