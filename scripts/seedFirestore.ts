@@ -10,6 +10,7 @@ import {
   metrics,
   publishers,
 } from "../src/data/mockData";
+import { editionLocations } from "../src/data/locationData";
 
 interface SeedDocument {
   id: string;
@@ -205,6 +206,7 @@ async function main() {
   console.log(`Seeding Firestore project: ${projectId}, database: ${firestoreDatabaseId}`);
   await writeCollection("publishers", publishers);
   await deleteDocuments("publishers", legacyPublisherIds);
+  await writeCollection("editionLocations", editionLocations);
   await writeCollection("editions", editions);
   await writeCollection("articlePosts", articles);
   await writeCollection(

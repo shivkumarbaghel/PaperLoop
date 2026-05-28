@@ -52,6 +52,7 @@ export interface Edition {
   publisherId: string;
   title: string;
   date: string;
+  state?: string;
   city: string;
   language: string;
   sections: string[];

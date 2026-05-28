@@ -82,6 +82,8 @@ import {
   createArticleBlockFromPreviewPage,
   createEditionDraft,
   generateEditionPreviewPages,
+  getEditionLocations,
+  getPublisherArticlePostDetail,
   getPublisherArticleBlocks,
   getPublisherComments,
   getPublisherWorkspaceEditions,
@@ -90,8 +92,14 @@ import {
   updateArticleBlockStatus,
   updateEditionWorkflowStatus,
   type CampaignInput,
+  type PublisherArticlePostDetail,
   type PublisherCommentActivity,
+  type PublisherEngagementActivity,
 } from "./services/publisherWorkspaceRepository";
+import {
+  editionLocations as fallbackEditionLocations,
+  type EditionLocation,
+} from "./data/locationData";
 import {
   emptyUserAccess,
   getUserAccess,
@@ -164,6 +172,17 @@ const blockTypes: ArticleBlockType[] = [
   "notice",
   "other",
 ];
+
+function findLocationByCity(
+  city: string | undefined,
+  locations: EditionLocation[],
+) {
+  if (!city) {
+    return undefined;
+  }
+
+  return locations.find((location) => location.cities.includes(city));
+}
 
 function App() {
   const navigate = useNavigate();
@@ -509,6 +528,17 @@ function App() {
                 profile={profile}
                 publishers={publishers}
                 authUser={authUser}
+                userAccess={userAccess}
+              />
+            }
+          />
+          <Route
+            path="/admin/edition-studio/posts/:articleId"
+            element={
+              <PublisherClipDetailRoute
+                articles={articles}
+                profile={profile}
+                publishers={publishers}
                 userAccess={userAccess}
               />
             }
@@ -1178,6 +1208,261 @@ interface ArticleRouteProps {
   onAuthRequired: () => void;
 }
 
+interface PublisherClipDetailRouteProps {
+  articles: ArticlePost[];
+  profile: UserProfile | null;
+  publishers: Publisher[];
+  userAccess: UserAccess;
+}
+
+function PublisherClipDetailRoute({
+  articles,
+  profile,
+  publishers,
+  userAccess,
+}: PublisherClipDetailRouteProps) {
+  const { articleId } = useParams<{ articleId: string }>();
+  const navigate = useNavigate();
+  const [detail, setDetail] = useState<PublisherArticlePostDetail | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const fallbackArticle = articles.find((article) => article.id === articleId) ?? null;
+  const manageablePublisherIds = useMemo(
+    () =>
+      canManagePlatform(profile)
+        ? publishers.map((publisher) => publisher.id)
+        : userAccess.staffPublisherIds,
+    [profile, publishers, userAccess.staffPublisherIds],
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    if (!articleId || !canOpenAdminWorkspace(profile, userAccess)) {
+      return undefined;
+    }
+
+    getPublisherArticlePostDetail(articleId, manageablePublisherIds)
+      .then((nextDetail) => {
+        if (!active) {
+          return;
+        }
+
+        if (nextDetail) {
+          setDetail(nextDetail);
+          setStatus("ready");
+          return;
+        }
+
+        if (
+          fallbackArticle &&
+          manageablePublisherIds.includes(fallbackArticle.publisherId)
+        ) {
+          setDetail({
+            article: fallbackArticle,
+            block: null,
+            comments: [],
+            engagements: [],
+          });
+          setStatus("ready");
+          return;
+        }
+
+        setDetail(null);
+        setStatus("error");
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        setDetail(null);
+        setStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [articleId, fallbackArticle, manageablePublisherIds, profile, userAccess]);
+
+  if (!canOpenAdminWorkspace(profile, userAccess)) {
+    return (
+      <section className="admin-layout">
+        <div className="locked-panel">
+          <Lock size={24} />
+          <div>
+            <strong>Publisher authorization required</strong>
+            <p>Use an assigned publisher staff account to inspect clip engagement.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (status === "loading") {
+    return (
+      <section className="admin-layout">
+        <p className="empty-state">Loading clip engagement...</p>
+      </section>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <section className="admin-layout">
+        <button className="back-button" onClick={() => navigate(EDITION_STUDIO_PATH)}>
+          <ArrowLeft size={18} />
+          Back to edition studio
+        </button>
+        <p className="empty-state">Clip post not found for this publisher workspace.</p>
+      </section>
+    );
+  }
+
+  const { article, block, comments, engagements } = detail;
+  const engagementCounts = countEngagements(article, engagements, comments);
+  const publisher = publishers.find((item) => item.id === article.publisherId);
+
+  return (
+    <section className="admin-layout clip-detail-layout">
+      <button className="back-button" onClick={() => navigate(EDITION_STUDIO_PATH)}>
+        <ArrowLeft size={18} />
+        Back to edition studio
+      </button>
+
+      <div className="admin-hero compact">
+        <span className="eyebrow">Publisher clip detail</span>
+        <h1>{article.title}</h1>
+        <p>
+          {publisher?.name ?? article.publisherId} • Page {article.pageNumber} •{" "}
+          {article.section}
+        </p>
+      </div>
+
+      <div className="clip-detail-grid">
+        <article className="article-panel clip-detail-panel">
+          {article.clippedImageUrl ? (
+            <figure className="article-clip-image">
+              <img src={article.clippedImageUrl} alt={article.title} />
+              <figcaption>
+                Storage: {article.clippedImagePath ?? "saved clipping URL"}
+              </figcaption>
+            </figure>
+          ) : (
+            <div className={`clip-visual ${article.clippedImageTone}`}>
+              <span>{article.section}</span>
+            </div>
+          )}
+          <div className="article-content">
+            <div className="article-kicker">
+              <span>{formatRole(article.status)}</span>
+              <span>{formatRole(article.accessRule)}</span>
+              <span>{formatRole(article.discussionRule)}</span>
+            </div>
+            <h2>Customer-facing post</h2>
+            <p className="summary">{article.summary}</p>
+            <p>{article.body}</p>
+            <div className="clip-source-list">
+              <span>articlePosts/{article.id}</span>
+              <span>editions/{article.editionId}</span>
+              <span>pageAssets/{article.pageId}</span>
+              {article.sourceBlockId && <span>articleBlocks/{article.sourceBlockId}</span>}
+            </div>
+          </div>
+        </article>
+
+        <aside className="workspace-panel clip-detail-card">
+          <div className="section-heading compact">
+            <span className="eyebrow">Engagement</span>
+            <h2>Reader activity</h2>
+          </div>
+          <div className="clip-detail-metrics">
+            <article>
+              <Heart size={18} />
+              <strong>{engagementCounts.likes.toLocaleString()}</strong>
+              <span>Likes</span>
+            </article>
+            <article>
+              <Bookmark size={18} />
+              <strong>{engagementCounts.saves.toLocaleString()}</strong>
+              <span>Saves</span>
+            </article>
+            <article>
+              <Share2 size={18} />
+              <strong>{engagementCounts.shares.toLocaleString()}</strong>
+              <span>Shares</span>
+            </article>
+            <article>
+              <MessageCircle size={18} />
+              <strong>{engagementCounts.comments.toLocaleString()}</strong>
+              <span>Comments</span>
+            </article>
+          </div>
+          <div className="clip-schema-note">
+            <strong>Collection links</strong>
+            <p>
+              Comments and engagement events are stored separately and linked through
+              publisherId, editionId, pageId, and articlePostId.
+            </p>
+          </div>
+          {block && (
+            <div className="clip-schema-note">
+              <strong>Page rectangle</strong>
+              <p>
+                {block.label}: x {block.x}%, y {block.y}%, width {block.width}%,
+                height {block.height}%.
+              </p>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <div className="clip-activity-grid">
+        <section className="workspace-panel">
+          <div className="section-heading compact">
+            <span className="eyebrow">Comments</span>
+            <h2>Reader discussion</h2>
+          </div>
+          <div className="comment-list">
+            {comments.length === 0 ? (
+              <p className="empty-state">No comments recorded for this clip yet.</p>
+            ) : (
+              comments.map((comment) => (
+                <article className="comment-card" key={comment.id}>
+                  <div>
+                    <strong>{comment.userName}</strong>
+                    <span>{formatActivityDate(comment.createdAt)}</span>
+                  </div>
+                  <p>{comment.body}</p>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="workspace-panel">
+          <div className="section-heading compact">
+            <span className="eyebrow">Events</span>
+            <h2>Likes, saves, shares, and reports</h2>
+          </div>
+          <div className="engagement-event-list">
+            {engagements.length === 0 ? (
+              <p className="empty-state">No engagement events recorded yet.</p>
+            ) : (
+              engagements.slice(0, 20).map((event) => (
+                <article key={event.id}>
+                  <span>{formatRole(event.type)}</span>
+                  <strong>{event.userId ?? "reader"}</strong>
+                  <small>{formatActivityDate(event.createdAt)}</small>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function ArticleRoute({
   articles,
   authUser,
@@ -1451,6 +1736,44 @@ function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function countEngagements(
+  article: ArticlePost,
+  engagements: PublisherEngagementActivity[],
+  comments: PublisherCommentActivity[],
+) {
+  const countType = (type: PublisherEngagementActivity["type"]) =>
+    engagements.filter((event) => event.type === type).length;
+
+  return {
+    likes: Math.max(article.stats.likes ?? 0, countType("like")),
+    saves: Math.max(article.stats.saves, countType("save")),
+    shares: Math.max(article.stats.shares, countType("share")),
+    comments: Math.max(article.stats.comments, comments.length, countType("comment")),
+  };
+}
+
+function formatActivityDate(value: unknown) {
+  if (value && typeof value === "object" && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate().toLocaleString("en-IN", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+
+  if (typeof value === "string" && value !== "Just now") {
+    const parsed = Date.parse(value);
+
+    if (Number.isFinite(parsed)) {
+      return new Date(parsed).toLocaleString("en-IN", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+    }
+  }
+
+  return typeof value === "string" ? value : "Recent";
+}
+
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
@@ -1664,6 +1987,7 @@ function AdminView({
   publishers,
   userAccess,
 }: AdminViewProps) {
+  const navigate = useNavigate();
   const accessiblePublishers = useMemo(
     () =>
       canManagePlatform(profile)
@@ -1681,10 +2005,17 @@ function AdminView({
     accessiblePublishers.find((publisher) => publisher.id === draftPublisherId) ??
     fallbackPublisher;
   const selectedDraftPublisherId = selectedDraftPublisher?.id ?? "";
+  const fallbackLocation =
+    findLocationByCity(fallbackPublisher?.city, fallbackEditionLocations) ??
+    fallbackEditionLocations[0];
   const [draftTitle, setDraftTitle] = useState("Today edition");
   const [draftDate, setDraftDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
+  const [editionLocations, setEditionLocations] = useState<EditionLocation[]>(
+    fallbackEditionLocations,
+  );
+  const [draftState, setDraftState] = useState(fallbackLocation?.state ?? "");
   const [draftCity, setDraftCity] = useState(fallbackPublisher?.city ?? "");
   const [draftLanguage, setDraftLanguage] = useState(
     fallbackPublisher?.language ?? "Hindi",
@@ -1776,6 +2107,15 @@ function AdminView({
   >("idle");
   const [campaignMessage, setCampaignMessage] = useState("");
   const [staffActionMessage, setStaffActionMessage] = useState("");
+  const draftCityOptions = useMemo(
+    () =>
+      editionLocations.find((location) => location.state === draftState)?.cities ??
+      [],
+    [draftState, editionLocations],
+  );
+  const selectedDraftCity = draftCityOptions.includes(draftCity)
+    ? draftCity
+    : draftCityOptions[0] ?? draftCity;
   const workspacePublisherIds = useMemo(
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
@@ -1888,6 +2228,23 @@ function AdminView({
   useEffect(() => {
     let active = true;
 
+    getEditionLocations().then((locations) => {
+      if (!active) {
+        return;
+      }
+
+      setEditionLocations(locations);
+      setLocationDraftFromPublisher(selectedDraftPublisher, locations);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedDraftPublisher]);
+
+  useEffect(() => {
+    let active = true;
+
     Promise.all([
       getPublisherWorkspaceEditions(workspacePublisherIds),
       getPublisherArticleBlocks(workspacePublisherIds),
@@ -1989,7 +2346,8 @@ function AdminView({
           publisherId: selectedDraftPublisherId,
           title: draftTitle,
           date: draftDate,
-          city: draftCity,
+          state: draftState,
+          city: selectedDraftCity,
           language: draftLanguage,
           accessRule: draftAccessRule,
           sections: draftSections
@@ -2018,6 +2376,17 @@ function AdminView({
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setSourceFile(event.target.files?.[0] ?? null);
+  }
+
+  function setLocationDraftFromPublisher(
+    publisher: Publisher | undefined,
+    locations: EditionLocation[],
+  ) {
+    const publisherLocation = findLocationByCity(publisher?.city, locations);
+    const nextLocation = publisherLocation ?? locations[0];
+
+    setDraftState(nextLocation?.state ?? "");
+    setDraftCity(publisherLocation ? publisher?.city ?? "" : nextLocation?.cities[0] ?? "");
   }
 
   async function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2795,7 +3164,7 @@ function AdminView({
                         setDraftPublisherId(event.target.value);
 
                         if (nextPublisher) {
-                          setDraftCity(nextPublisher.city);
+                          setLocationDraftFromPublisher(nextPublisher, editionLocations);
                           setDraftLanguage(nextPublisher.language);
                         }
                       }}
@@ -2803,6 +3172,40 @@ function AdminView({
                       {accessiblePublishers.map((publisher) => (
                         <option key={publisher.id} value={publisher.id}>
                           {publisher.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="studio-field">
+                    <span>State</span>
+                    <select
+                      value={draftState}
+                      onChange={(event) => {
+                        const nextState = event.target.value;
+                        const nextLocation = editionLocations.find(
+                          (location) => location.state === nextState,
+                        );
+
+                        setDraftState(nextState);
+                        setDraftCity(nextLocation?.cities[0] ?? "");
+                      }}
+                    >
+                      {editionLocations.map((location) => (
+                        <option key={location.id} value={location.state}>
+                          {location.state}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="studio-field">
+                    <span>City</span>
+                    <select
+                      value={selectedDraftCity}
+                      onChange={(event) => setDraftCity(event.target.value)}
+                    >
+                      {draftCityOptions.map((city) => (
+                        <option key={city} value={city}>
+                          {city}
                         </option>
                       ))}
                     </select>
@@ -2843,13 +3246,6 @@ function AdminView({
                   <details className="studio-advanced-fields">
                     <summary>Edition defaults</summary>
                     <div className="studio-advanced-grid">
-                      <label className="studio-field">
-                        <span>City</span>
-                        <input
-                          value={draftCity}
-                          onChange={(event) => setDraftCity(event.target.value)}
-                        />
-                      </label>
                       <label className="studio-field">
                         <span>Language</span>
                         <input
@@ -3472,6 +3868,14 @@ function AdminView({
                             <small>
                               Page {article.pageNumber} • {formatRole(article.status)}
                             </small>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                navigate(`${EDITION_STUDIO_PATH}/posts/${article.id}`)
+                              }
+                            >
+                              View activity
+                            </button>
                           </article>
                         ))}
                       </div>
@@ -3665,6 +4069,12 @@ function AdminView({
                   {article.stats.shares.toLocaleString()} shares •{" "}
                   {article.stats.comments} comments
                 </small>
+                <button
+                  type="button"
+                  onClick={() => navigate(`${EDITION_STUDIO_PATH}/posts/${article.id}`)}
+                >
+                  Open
+                </button>
               </article>
             ))}
             {publisherArticles.length === 0 && (

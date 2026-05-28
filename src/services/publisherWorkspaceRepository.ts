@@ -28,6 +28,10 @@ import type {
   EditionStatus,
   Page,
 } from "../types";
+import {
+  editionLocations as fallbackEditionLocations,
+  type EditionLocation,
+} from "../data/locationData";
 
 const maxUploadBytes = 25 * 1024 * 1024;
 const allowedContentTypes = new Set([
@@ -41,11 +45,35 @@ export interface EditionDraftInput {
   publisherId: string;
   title: string;
   date: string;
+  state: string;
   city: string;
   language: string;
   sections: string[];
   accessRule: AccessRule;
   sourceFile: File;
+}
+
+export async function getEditionLocations(): Promise<EditionLocation[]> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return fallbackEditionLocations;
+  }
+
+  try {
+    const snapshot = await getDocs(collection(firebase.db, "editionLocations"));
+    const locations = snapshot.docs
+      .map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      }))
+      .filter(isEditionLocation)
+      .sort((a, b) => a.state.localeCompare(b.state));
+
+    return locations.length ? locations : fallbackEditionLocations;
+  } catch {
+    return fallbackEditionLocations;
+  }
 }
 
 export interface ArticleBlockInput {
@@ -106,6 +134,91 @@ export interface PublisherCommentActivity extends Comment {
   status: string;
 }
 
+export interface PublisherEngagementActivity {
+  id: string;
+  articlePostId: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  type: "like" | "save" | "share" | "report" | "follow" | "comment";
+  status: string;
+  userId?: string;
+  metadata?: Record<string, string | number | boolean>;
+  createdAt?: unknown;
+}
+
+export interface PublisherArticlePostDetail {
+  article: ArticlePost;
+  block: ArticleBlock | null;
+  comments: PublisherCommentActivity[];
+  engagements: PublisherEngagementActivity[];
+}
+
+export async function getPublisherArticlePostDetail(
+  articleId: string,
+  publisherIds: string[],
+): Promise<PublisherArticlePostDetail | null> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase || !articleId || publisherIds.length === 0) {
+    return null;
+  }
+
+  const articleSnapshot = await getDoc(doc(firebase.db, "articlePosts", articleId));
+
+  if (!articleSnapshot.exists()) {
+    return null;
+  }
+
+  const article = {
+    id: articleSnapshot.id,
+    ...articleSnapshot.data(),
+  } as ArticlePost;
+
+  if (!publisherIds.includes(article.publisherId)) {
+    return null;
+  }
+
+  const [commentSnapshot, engagementSnapshot, blockSnapshot] = await Promise.all([
+    getDocs(
+      query(
+        collection(firebase.db, "comments"),
+        where("articlePostId", "==", article.id),
+      ),
+    ),
+    getDocs(
+      query(
+        collection(firebase.db, "engagements"),
+        where("articlePostId", "==", article.id),
+      ),
+    ),
+    article.sourceBlockId
+      ? getDoc(doc(firebase.db, "articleBlocks", article.sourceBlockId))
+      : Promise.resolve(null),
+  ]);
+
+  const comments = commentSnapshot.docs
+    .map((documentSnapshot) => ({
+      id: documentSnapshot.id,
+      ...documentSnapshot.data(),
+    })) as PublisherCommentActivity[];
+  const engagements = engagementSnapshot.docs
+    .map((documentSnapshot) => ({
+      id: documentSnapshot.id,
+      ...documentSnapshot.data(),
+    })) as PublisherEngagementActivity[];
+  const block = blockSnapshot?.exists()
+    ? ({ id: blockSnapshot.id, ...blockSnapshot.data() } as ArticleBlock)
+    : null;
+
+  return {
+    article,
+    block,
+    comments: comments.sort(compareActivityCreatedAt),
+    engagements: engagements.sort(compareActivityCreatedAt),
+  };
+}
+
 export async function createEditionDraft(
   input: EditionDraftInput,
   user: User,
@@ -144,6 +257,7 @@ export async function createEditionDraft(
     publisherId: input.publisherId,
     title: input.title.trim(),
     date: input.date,
+    state: input.state.trim(),
     city: input.city.trim(),
     language: input.language.trim(),
     sections: input.sections,
@@ -761,8 +875,14 @@ function normalizeGeometry(
 }
 
 function validateDraftInput(input: EditionDraftInput) {
-  if (!input.publisherId || !input.title.trim() || !input.date || !input.city.trim()) {
-    throw new Error("Publisher, title, date, and city are required.");
+  if (
+    !input.publisherId ||
+    !input.title.trim() ||
+    !input.date ||
+    !input.state.trim() ||
+    !input.city.trim()
+  ) {
+    throw new Error("Publisher, title, date, state, and city are required.");
   }
 
   if (!input.sections.length) {
@@ -825,6 +945,20 @@ function slugify(value: string) {
     .replace(/(^-|-$)/g, "");
 }
 
+function isEditionLocation(value: unknown): value is EditionLocation {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "state" in value &&
+    "cities" in value &&
+    typeof value.id === "string" &&
+    typeof value.state === "string" &&
+    Array.isArray(value.cities) &&
+    value.cities.every((city) => typeof city === "string")
+  );
+}
+
 function buildPreviewPages(edition: Edition): Page[] {
   const sections = edition.sections.length ? edition.sections : ["मुख पृष्ठ"];
 
@@ -847,4 +981,23 @@ function chunk<T>(values: T[], size: number) {
   }
 
   return chunks;
+}
+
+function compareActivityCreatedAt(
+  a: { createdAt?: unknown },
+  b: { createdAt?: unknown },
+) {
+  return activityTime(b.createdAt) - activityTime(a.createdAt);
+}
+
+function activityTime(value: unknown) {
+  if (value && typeof value === "object" && "toMillis" in value) {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+
+  if (typeof value === "string") {
+    return Date.parse(value) || 0;
+  }
+
+  return 0;
 }

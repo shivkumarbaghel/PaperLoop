@@ -2109,7 +2109,7 @@ main:has(.admin-layout) {
 }
 
 .article-admin-table article {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
 .publisher-admin-card span,
@@ -2124,6 +2124,96 @@ main:has(.admin-layout) {
   object-fit: cover;
   border-radius: 6px;
   background: #fff;
+}
+
+.article-admin-table button,
+.created-post-strip button {
+  border: 1px solid rgba(43, 59, 52, 0.16);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #165a4c;
+  font-weight: 900;
+}
+
+.clip-detail-layout {
+  align-content: start;
+}
+
+.clip-detail-grid,
+.clip-activity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.7fr);
+  gap: 18px;
+}
+
+.clip-detail-panel {
+  min-width: 0;
+}
+
+.clip-detail-card {
+  align-self: start;
+}
+
+.clip-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.clip-detail-metrics article {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.clip-detail-metrics strong {
+  color: #165a4c;
+  font-size: 1.4rem;
+}
+
+.clip-detail-metrics span,
+.clip-schema-note p,
+.clip-source-list span,
+.engagement-event-list small {
+  color: #69746f;
+}
+
+.clip-schema-note {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(43, 59, 52, 0.12);
+}
+
+.clip-source-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.clip-source-list span {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f1eee7;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.engagement-event-list {
+  display: grid;
+  gap: 10px;
+}
+
+.engagement-event-list article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(43, 59, 52, 0.1);
 }
 
 .staff-actions {
@@ -2459,6 +2549,8 @@ main:has(.admin-layout) {
   .access-directory,
   .admin-grid,
   .edition-studio-workspace,
+  .clip-detail-grid,
+  .clip-activity-grid,
   .clip-editor {
     grid-template-columns: 1fr;
   }
