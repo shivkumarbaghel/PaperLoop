@@ -4,6 +4,7 @@ import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { logger } from "firebase-functions";
 import { defineSecret } from "firebase-functions/params";
+import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import OpenAI from "openai";
 import sharp from "sharp";
@@ -26,6 +27,26 @@ interface EditionRecord {
   status: "draft" | "processing" | "review" | "published" | "archived" | "failed";
   sourceAssetPath?: string;
   sourceAssetType?: string;
+  pages?: Array<{
+    id: string;
+    pageNumber: number;
+    section: string;
+    headline: string;
+    subhead: string;
+    imageUrl?: string;
+    thumbnailUrl?: string;
+    width?: number;
+    height?: number;
+    processingStatus?: string;
+    hotspots?: unknown[];
+  }>;
+}
+
+interface AppendEditionPagesInput {
+  publisherId: string;
+  editionId: string;
+  sourceAssetPath: string;
+  contentType: string;
 }
 
 interface PageAssetResult {
@@ -50,6 +71,165 @@ interface SuggestedBlock {
   height: number;
   confidence: number;
 }
+
+interface ClipRegionInput {
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  pageNumber: number;
+  pageSection: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ExtractedClipDetails {
+  type: SuggestedBlock["type"];
+  label: string;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  confidence: number;
+  previewDataUrl: string;
+}
+
+export const extractClipRegionDetails = onCall(
+  {
+    region: "asia-south1",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    secrets: [openAiApiKey],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Sign in to extract clip details.");
+    }
+
+    const input = request.data as ClipRegionInput;
+
+    if (
+      !input?.publisherId ||
+      !input.editionId ||
+      !input.pageId ||
+      !Number.isFinite(input.pageNumber) ||
+      input.pageNumber < 1
+    ) {
+      throw new HttpsError("invalid-argument", "Publisher, edition, and page are required.");
+    }
+
+    await assertPublisherAccess(request.auth.uid, input.publisherId);
+
+    const geometry = normalizeGeometry(input);
+    const pagePath = `publishers/${input.publisherId}/editions/${input.editionId}/pages/page-${input.pageNumber}.png`;
+
+    let pageBuffer: Buffer;
+
+    try {
+      [pageBuffer] = await bucket.file(pagePath).download();
+    } catch {
+      throw new HttpsError("not-found", "Processed page image was not found for this clip.");
+    }
+
+    const croppedWebp = await cropPageRegion(pageBuffer, geometry);
+    const pageSection = input.pageSection?.trim() || "General";
+    const details = await extractDetailsFromCrop(
+      croppedWebp,
+      pageSection,
+      openAiApiKey.value(),
+    );
+
+    return {
+      ...details,
+      previewDataUrl: `data:image/webp;base64,${croppedWebp.toString("base64")}`,
+    } satisfies ExtractedClipDetails;
+  },
+);
+
+export const appendEditionPages = onCall(
+  {
+    region: "asia-south1",
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    secrets: [openAiApiKey],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError("unauthenticated", "Sign in to add pages to an edition.");
+    }
+
+    const input = request.data as AppendEditionPagesInput;
+
+    if (
+      !input?.publisherId ||
+      !input.editionId ||
+      !input.sourceAssetPath ||
+      !input.contentType
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Publisher, edition, source asset path, and content type are required.",
+      );
+    }
+
+    await assertPublisherAccess(request.auth.uid, input.publisherId);
+
+    const editionRef = db.collection("editions").doc(input.editionId);
+    const editionSnapshot = await editionRef.get();
+
+    if (!editionSnapshot.exists) {
+      throw new HttpsError("not-found", "Edition not found.");
+    }
+
+    const edition = {
+      id: editionSnapshot.id,
+      ...editionSnapshot.data(),
+    } as EditionRecord;
+
+    if (edition.publisherId !== input.publisherId) {
+      throw new HttpsError("permission-denied", "Edition publisher mismatch.");
+    }
+
+    const existingPages = edition.pages ?? [];
+    const startPageNumber = nextEditionPageNumber(existingPages);
+    const [sourceBuffer] = await bucket.file(input.sourceAssetPath).download();
+    const pageAssets =
+      input.contentType === "application/pdf"
+        ? await renderPdfPages(sourceBuffer, edition, startPageNumber)
+        : await normalizeImagePage(sourceBuffer, edition, startPageNumber);
+    const appendedPages = [];
+
+    for (const page of pageAssets) {
+      const pageImage = await uploadPageImage(edition, page);
+
+      appendedPages.push({
+        id: page.pageId,
+        editionId: edition.id,
+        pageNumber: page.pageNumber,
+        section: page.section,
+        headline: `${page.section} page`,
+        subhead: `${edition.city} edition • ${edition.date}`,
+        imageUrl: pageImage.imageUrl,
+        thumbnailUrl: pageImage.thumbnailUrl,
+        width: pageImage.width,
+        height: pageImage.height,
+        processingStatus: "ready",
+        hotspots: [],
+      });
+    }
+
+    await editionRef.update({
+      pages: [...existingPages, ...appendedPages],
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      addedPageCount: appendedPages.length,
+      pages: appendedPages,
+    };
+  },
+);
 
 export const processEditionAsset = onDocumentWritten(
   {
@@ -102,8 +282,8 @@ export const processEditionAsset = onDocumentWritten(
     try {
       const [sourceBuffer] = await bucket.file(edition.sourceAssetPath).download();
       const pages = edition.sourceAssetType === "application/pdf"
-        ? await renderPdfPages(sourceBuffer, edition)
-        : await normalizeImagePage(sourceBuffer, edition);
+        ? await renderPdfPages(sourceBuffer, edition, 1)
+        : await normalizeImagePage(sourceBuffer, edition, 1);
       const pagesWithBlocks = [];
 
       for (const page of pages) {
@@ -196,6 +376,7 @@ export const processEditionAsset = onDocumentWritten(
 async function normalizeImagePage(
   sourceBuffer: Buffer,
   edition: EditionRecord,
+  startPageNumber = 1,
 ): Promise<PageAssetResult[]> {
   const image = sharp(sourceBuffer).rotate().resize({ width: 1800, withoutEnlargement: true });
   const metadata = await image.metadata();
@@ -203,9 +384,9 @@ async function normalizeImagePage(
 
   return [
     {
-      pageId: `${edition.id}-p1`,
-      pageNumber: 1,
-      section: edition.sections?.[0] ?? "मुख पृष्ठ",
+      pageId: `${edition.id}-p${startPageNumber}`,
+      pageNumber: startPageNumber,
+      section: edition.sections?.[startPageNumber - 1] ?? "मुख पृष्ठ",
       imageBuffer,
       width: metadata.width ?? 1200,
       height: metadata.height ?? 1800,
@@ -216,6 +397,7 @@ async function normalizeImagePage(
 async function renderPdfPages(
   sourceBuffer: Buffer,
   edition: EditionRecord,
+  startPageNumber = 1,
 ): Promise<PageAssetResult[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const canvasModule = await import("@napi-rs/canvas");
@@ -228,8 +410,9 @@ async function renderPdfPages(
   const pageCount = Math.min(document.numPages, maxPdfPages);
   const pages: PageAssetResult[] = [];
 
-  for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-    const pdfPage = await document.getPage(pageNumber);
+  for (let pdfPageIndex = 1; pdfPageIndex <= pageCount; pdfPageIndex += 1) {
+    const pageNumber = startPageNumber + pdfPageIndex - 1;
+    const pdfPage = await document.getPage(pdfPageIndex);
     const viewport = pdfPage.getViewport({ scale: 2 });
     const canvas = canvasModule.createCanvas(
       Math.ceil(viewport.width),
@@ -480,4 +663,161 @@ function normalizeGeometry(block: Pick<SuggestedBlock, "x" | "y" | "width" | "he
   const height = Math.max(1, Math.min(clampPercent(block.height), 100 - y));
 
   return { x, y, width, height };
+}
+
+async function assertPublisherAccess(uid: string, publisherId: string) {
+  const staffSnapshot = await db
+    .collection("publisherStaff")
+    .doc(`${publisherId}_${uid}`)
+    .get();
+
+  if (staffSnapshot.exists && staffSnapshot.data()?.status === "active") {
+    return;
+  }
+
+  const userSnapshot = await db.collection("users").doc(uid).get();
+  const role = userSnapshot.data()?.role;
+
+  if (role === "platform_admin" || role === "super_admin") {
+    return;
+  }
+
+  throw new HttpsError(
+    "permission-denied",
+    "This account cannot extract clip details for that publisher.",
+  );
+}
+
+function nextEditionPageNumber(
+  pages: Array<{ pageNumber: number }>,
+) {
+  if (!pages.length) {
+    return 1;
+  }
+
+  return Math.max(...pages.map((page) => page.pageNumber)) + 1;
+}
+
+async function cropPageRegion(
+  imageBuffer: Buffer,
+  geometry: Pick<SuggestedBlock, "x" | "y" | "width" | "height">,
+) {
+  const metadata = await sharp(imageBuffer).metadata();
+  const imageWidth = metadata.width ?? 1200;
+  const imageHeight = metadata.height ?? 1800;
+  const crop = normalizeGeometry(geometry);
+  const left = Math.floor((crop.x / 100) * imageWidth);
+  const top = Math.floor((crop.y / 100) * imageHeight);
+  const width = Math.min(
+    Math.max(1, Math.round((crop.width / 100) * imageWidth)),
+    imageWidth - left,
+  );
+  const height = Math.min(
+    Math.max(1, Math.round((crop.height / 100) * imageHeight)),
+    imageHeight - top,
+  );
+
+  return sharp(imageBuffer)
+    .extract({ left, top, width, height })
+    .webp({ quality: 86 })
+    .toBuffer();
+}
+
+async function extractDetailsFromCrop(
+  croppedWebp: Buffer,
+  pageSection: string,
+  apiKey: string,
+): Promise<Omit<ExtractedClipDetails, "previewDataUrl">> {
+  if (!apiKey) {
+    return fallbackClipDetails(pageSection);
+  }
+
+  const openai = new OpenAI({ apiKey });
+  const dataUrl = `data:image/webp;base64,${croppedWebp.toString("base64")}`;
+
+  try {
+    const response = await openai.responses.create({
+      model: blockModel,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: [
+                "Read this cropped Hindi/English newspaper clip.",
+                "Extract editorial metadata for a publisher workflow.",
+                "Return a concise hotspot label (3-6 words), headline title, section name, short summary, and brief OCR body text.",
+                `Default section hint: ${pageSection}.`,
+              ].join(" "),
+            },
+            {
+              type: "input_image",
+              image_url: dataUrl,
+              detail: "high",
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "paperloop_clip_details",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "label", "title", "section", "summary", "body", "confidence"],
+            properties: {
+              type: {
+                type: "string",
+                enum: ["article", "advertisement", "photo", "notice", "other"],
+              },
+              label: { type: "string" },
+              title: { type: "string" },
+              section: { type: "string" },
+              summary: { type: "string" },
+              body: { type: "string" },
+              confidence: { type: "number" },
+            },
+          },
+        },
+      },
+    } as never);
+    const outputText = (response as { output_text?: string }).output_text ?? "";
+    const parsed = JSON.parse(outputText) as Partial<ExtractedClipDetails>;
+
+    return {
+      type: parsed.type ?? "article",
+      label: parsed.label?.trim() || "Clip story",
+      title: parsed.title?.trim() || `${pageSection} story`,
+      section: parsed.section?.trim() || pageSection,
+      summary:
+        parsed.summary?.trim() ||
+        "AI extracted summary from the selected clip. Review before publishing.",
+      body:
+        parsed.body?.trim() ||
+        "AI OCR draft from the selected clip. Editors should verify before publishing.",
+      confidence: Math.max(0, Math.min(1, parsed.confidence ?? 0.65)),
+    };
+  } catch (error) {
+    logger.warn("Clip detail extraction fell back to defaults", {
+      pageSection,
+      error: error instanceof Error ? error.message : "unknown",
+    });
+
+    return fallbackClipDetails(pageSection);
+  }
+}
+
+function fallbackClipDetails(pageSection: string): Omit<ExtractedClipDetails, "previewDataUrl"> {
+  return {
+    type: "article",
+    label: "Clip story",
+    title: `${pageSection} story`,
+    section: pageSection,
+    summary: "Clip region saved. Add or correct extracted text before publishing.",
+    body: "OCR draft will appear here after smart extraction. Review manually if needed.",
+    confidence: 0.45,
+  };
 }

@@ -1,4 +1,5 @@
 import type {
+  ArticleBlock,
   ArticlePost,
   Campaign,
   Columnist,
@@ -252,9 +253,125 @@ export const editions: Edition[] = [
       },
     ],
   },
+  {
+    id: "navodayatimes-2026-05-27-new-delhi-smoke",
+    publisherId: "navodayatimes",
+    title: "Navodaya Times - New Delhi Smoke",
+    date: "2026-05-27",
+    state: "Delhi",
+    city: "New Delhi",
+    language: "Hindi",
+    sections: ["मुख पृष्ठ", "दिल्ली", "स्वास्थ्य", "व्यापार"],
+    status: "published",
+    accessRule: "public",
+    pages: [
+      {
+        id: "navodayatimes-2026-05-27-new-delhi-smoke-p1",
+        editionId: "navodayatimes-2026-05-27-new-delhi-smoke",
+        pageNumber: 1,
+        section: "दिल्ली",
+        headline: "दिल्ली में धुएं की चादर, सांसों पर संकट",
+        subhead: "निगरानी केंद्रों ने सुबह से खराब हवा दर्ज की",
+        hotspots: [
+          {
+            id: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-hotspot",
+            articleId: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-post",
+            label: "Smoke alert",
+            x: 7,
+            y: 14,
+            width: 46,
+            height: 24,
+            blockId: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1",
+          },
+        ],
+      },
+    ],
+  },
+];
+
+export const articleBlocks: ArticleBlock[] = [
+  {
+    id: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1",
+    publisherId: "navodayatimes",
+    editionId: "navodayatimes-2026-05-27-new-delhi-smoke",
+    pageId: "navodayatimes-2026-05-27-new-delhi-smoke-p1",
+    pageNumber: 1,
+    type: "article",
+    status: "published",
+    source: "ai",
+    label: "Smoke alert",
+    title: "दिल्ली में धुएं की चादर, सांसों पर संकट",
+    section: "दिल्ली",
+    summary:
+      "धुएं और धूल की वजह से कई इलाकों में दृश्यता कम रही, डॉक्टरों ने बच्चों और बुजुर्गों को सावधानी बरतने को कहा.",
+    body:
+      "दिल्ली में बुधवार सुबह कई इलाकों में धुएं की परत दिखी. पर्यावरण विभाग ने निर्माण स्थलों, खुले में कचरा जलाने और यातायात जाम वाले हिस्सों पर निगरानी बढ़ाने की बात कही है.",
+    x: 7,
+    y: 14,
+    width: 46,
+    height: 24,
+    confidence: 0.86,
+    articlePostId: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-post",
+    clippedImagePath:
+      "publishers/navodayatimes/editions/navodayatimes-2026-05-27-new-delhi-smoke/article-clips/navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-post.webp",
+  },
 ];
 
 export const articles: ArticlePost[] = [
+  {
+    id: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-post",
+    publisherId: "navodayatimes",
+    editionId: "navodayatimes-2026-05-27-new-delhi-smoke",
+    pageId: "navodayatimes-2026-05-27-new-delhi-smoke-p1",
+    pageNumber: 1,
+    status: "published",
+    title: "दिल्ली में धुएं की चादर, सांसों पर संकट",
+    section: "दिल्ली",
+    author: {
+      id: "navodaya-city-desk",
+      name: "Navodaya City Desk",
+      publication: "Navodaya Times",
+      topics: ["Delhi", "Air quality", "Civic alerts"],
+      bio: "Tracks Delhi civic updates, health advisories, and neighborhood impact.",
+      verified: true,
+      followers: 3200,
+    },
+    summary:
+      "धुएं और धूल की वजह से कई इलाकों में दृश्यता कम रही, डॉक्टरों ने बच्चों और बुजुर्गों को सावधानी बरतने को कहा.",
+    body:
+      "दिल्ली में बुधवार सुबह कई इलाकों में धुएं की परत दिखी. पर्यावरण विभाग ने निर्माण स्थलों, खुले में कचरा जलाने और यातायात जाम वाले हिस्सों पर निगरानी बढ़ाने की बात कही है. विशेषज्ञों ने सलाह दी कि संवेदनशील लोग सुबह की सैर टालें और बाहर निकलते समय मास्क रखें.",
+    clippedImageTone: "civic",
+    clippedImagePath:
+      "publishers/navodayatimes/editions/navodayatimes-2026-05-27-new-delhi-smoke/article-clips/navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1-post.webp",
+    sourceBlockId: "navodayatimes-2026-05-27-new-delhi-smoke-p1-ai-1",
+    blockGeometry: { x: 7, y: 14, width: 46, height: 24 },
+    accessRule: "public",
+    discussionRule: "logged_in",
+    stats: { views: 5840, likes: 42, saves: 18, shares: 29, comments: 4 },
+    comments: [
+      {
+        id: "navodaya-smoke-comment-1",
+        userName: "Priya Reader",
+        body: "School timing advisory bhi mention karni chahiye.",
+        sentiment: "concern",
+        createdAt: "12 min ago",
+      },
+      {
+        id: "navodaya-smoke-comment-2",
+        userName: "Aman Delhi",
+        body: "Please add area-wise AQI numbers in the next update.",
+        sentiment: "neutral",
+        createdAt: "24 min ago",
+      },
+    ],
+    multimedia: [
+      {
+        type: "graphic",
+        title: "AQI zone tracker",
+        description: "Area-wise air quality bands for Delhi readers.",
+      },
+    ],
+  },
   {
     id: "article-bus-pass",
     publisherId: "narmada-times",

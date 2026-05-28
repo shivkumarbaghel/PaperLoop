@@ -1,10 +1,10 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type FormEvent,
-  type MouseEvent,
   type ReactNode,
 } from "react";
 import type { User } from "firebase/auth";
@@ -30,11 +30,15 @@ import {
   LayoutDashboard,
   Lock,
   LogOut,
+  MapPin,
   MessageCircle,
   Newspaper,
   PlaySquare,
+  Plus,
+  ExternalLink,
   Search,
   Share2,
+  Trash2,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -78,10 +82,16 @@ import {
   updatePublisherStaffStatus,
 } from "./services/accessManagementRepository";
 import {
+  appendEditionPagesFromFile,
   createAdvertiserCampaign,
   createArticleBlockFromPreviewPage,
+  createDraftClipPreviewUrl,
   createEditionDraft,
+  deleteArticleBlock,
+  deletePublisherEdition,
+  extractClipRegionDetails,
   generateEditionPreviewPages,
+  getEditionById,
   getEditionLanguages,
   getEditionLocations,
   getPublisherArticlePostDetail,
@@ -92,11 +102,17 @@ import {
   saveArticleBlockDraft,
   updateArticleBlockStatus,
   updateEditionWorkflowStatus,
+  updatePublisherArticlePost,
+  uploadPublisherClipImage,
   type CampaignInput,
   type PublisherArticlePostDetail,
   type PublisherCommentActivity,
   type PublisherEngagementActivity,
 } from "./services/publisherWorkspaceRepository";
+import {
+  ClipRegionDrawer,
+  type ClipRegionGeometry,
+} from "./components/ClipRegionDrawer";
 import {
   editionLocations as fallbackEditionLocations,
   type EditionLocation,
@@ -129,6 +145,7 @@ import type {
   UserProfile,
 } from "./types";
 import {
+  Link,
   Navigate,
   Route,
   Routes,
@@ -140,6 +157,7 @@ import {
 type View = "dashboard" | "reader" | "article" | "admin";
 
 const EDITION_STUDIO_PATH = "/admin/edition-studio";
+const EDITION_STUDIO_CONTEXT_KEY = "paperloop.editionStudioContext";
 
 function activeViewFromPath(pathname: string): View {
   if (pathname.startsWith("/admin")) {
@@ -161,6 +179,13 @@ type BlockGeometry = {
   y: number;
   width: number;
   height: number;
+};
+
+type EditionStudioContext = {
+  previewEditionId: string;
+  articlePageId: string;
+  selectedBlockId: string;
+  sidebarTab: "pages" | "clips";
 };
 
 const staffRoles: PublisherStaffMembership["role"][] = [
@@ -189,6 +214,85 @@ function findLocationByCity(
   return locations.find((location) => location.cities.includes(city));
 }
 
+function publisherStateName(
+  publisher: Publisher,
+  locations: EditionLocation[],
+) {
+  return findLocationByCity(publisher.city, locations)?.state ?? publisher.region;
+}
+
+function filterPublishersByLocale(
+  publishers: Publisher[],
+  locations: EditionLocation[],
+  filters: { language: string; state: string; city: string },
+) {
+  return publishers
+    .filter((publisher) => {
+      const resolvedState = publisherStateName(publisher, locations);
+      const matchesLanguage =
+        filters.language === "All" || publisher.language === filters.language;
+      const matchesState = filters.state === "All" || resolvedState === filters.state;
+      const matchesCity = filters.city === "All" || publisher.city === filters.city;
+
+      return matchesLanguage && matchesState && matchesCity;
+    })
+    .sort((a, b) => socialRankScore(b) - socialRankScore(a));
+}
+
+function readEditionStudioContext(): EditionStudioContext | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const storedValue = window.sessionStorage.getItem(EDITION_STUDIO_CONTEXT_KEY);
+
+    if (!storedValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(storedValue) as Partial<EditionStudioContext>;
+
+    if (!parsedValue.previewEditionId || !parsedValue.articlePageId) {
+      return null;
+    }
+
+    return {
+      previewEditionId: parsedValue.previewEditionId,
+      articlePageId: parsedValue.articlePageId,
+      selectedBlockId: parsedValue.selectedBlockId ?? "",
+      sidebarTab: parsedValue.sidebarTab === "clips" ? "clips" : "pages",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeEditionStudioContext(context: EditionStudioContext) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(
+    EDITION_STUDIO_CONTEXT_KEY,
+    JSON.stringify(context),
+  );
+}
+
+function articleStudioContext(article: ArticlePost): EditionStudioContext {
+  return {
+    previewEditionId: article.editionId,
+    articlePageId: article.pageId,
+    selectedBlockId: article.sourceBlockId ?? "",
+    sidebarTab: "clips",
+  };
+}
+
+function samePublisherId(left: string, right: string) {
+  return left.replace(/[^a-z0-9]/gi, "").toLowerCase() ===
+    right.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -202,8 +306,18 @@ function App() {
   );
   const [search, setSearch] = useState("");
   const [language, setLanguage] = useState("All");
-  const [region, setRegion] = useState("All");
+  const [state, setState] = useState("All");
+  const [city, setCity] = useState("All");
   const [topic, setTopic] = useState("All");
+  const [editionLocations, setEditionLocations] = useState<EditionLocation[]>(
+    fallbackEditionLocations,
+  );
+  const [editionLanguages, setEditionLanguages] = useState<EditionLanguage[]>(
+    fallbackEditionLanguages,
+  );
+  const [readerLanguage, setReaderLanguage] = useState("All");
+  const [readerState, setReaderState] = useState("All");
+  const [readerCity, setReaderCity] = useState("All");
   const [pageIndex, setPageIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [readerMode, setReaderMode] = useState(false);
@@ -300,19 +414,79 @@ function App() {
     return () => {
       active = false;
     };
+  }, [authUser?.uid]);
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all([getEditionLocations(), getEditionLanguages()]).then(
+      ([locations, languages]) => {
+        if (!active) {
+          return;
+        }
+
+        setEditionLocations(locations);
+        setEditionLanguages(languages);
+      },
+    );
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const languageOptions = useMemo(
-    () => ["All", ...unique(publishers.map((publisher) => publisher.language))],
-    [publishers],
+    () => ["All", ...editionLanguages.map((languageOption) => languageOption.name)],
+    [editionLanguages],
   );
-  const regionOptions = useMemo(
-    () => ["All", ...unique(publishers.map((publisher) => publisher.region))],
-    [publishers],
+  const stateOptions = useMemo(
+    () => ["All", ...editionLocations.map((location) => location.state)],
+    [editionLocations],
   );
+  const cityOptions = useMemo(() => {
+    if (state === "All") {
+      return ["All"];
+    }
+
+    const cities =
+      editionLocations.find((location) => location.state === state)?.cities ?? [];
+
+    return ["All", ...cities];
+  }, [editionLocations, state]);
   const topicOptions = useMemo(
     () => ["All", ...unique(publishers.flatMap((publisher) => publisher.topics))],
     [publishers],
+  );
+  const readerLanguageOptions = useMemo(
+    () => ["All", ...editionLanguages.map((languageOption) => languageOption.name)],
+    [editionLanguages],
+  );
+  const readerStateOptions = useMemo(
+    () => ["All", ...editionLocations.map((location) => location.state)],
+    [editionLocations],
+  );
+  const readerCityOptions = useMemo(() => {
+    if (readerState === "All") {
+      return ["All"];
+    }
+
+    const cities =
+      editionLocations.find((location) => location.state === readerState)?.cities ?? [];
+
+    return ["All", ...cities];
+  }, [editionLocations, readerState]);
+  const readerFilteredPublishers = useMemo(
+    () =>
+      filterPublishersByLocale(publishers, editionLocations, {
+        language: readerLanguage,
+        state: readerState,
+        city: readerCity,
+      }),
+    [editionLocations, publishers, readerCity, readerLanguage, readerState],
+  );
+  const trendingPublishers = useMemo(
+    () => readerFilteredPublishers.slice(0, 12),
+    [readerFilteredPublishers],
   );
 
   const selectedPublisher = publishers.find(
@@ -332,6 +506,14 @@ function App() {
     publisherEditions[0] ??
     createPlaceholderEdition(selectedPublisher);
 
+  const preferredReaderEdition = useMemo(
+    () =>
+      editions
+        .slice()
+        .sort((a, b) => readerEditionRank(b, articles) - readerEditionRank(a, articles))[0],
+    [articles, editions],
+  );
+
   const filteredPublishers = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
@@ -344,20 +526,89 @@ function App() {
           publisher.topics.some((publisherTopic) =>
             publisherTopic.toLowerCase().includes(normalizedSearch),
           );
+        const publisherState =
+          findLocationByCity(publisher.city, editionLocations)?.state ?? publisher.region;
         const matchesLanguage = language === "All" || publisher.language === language;
-        const matchesRegion = region === "All" || publisher.region === region;
+        const matchesState = state === "All" || publisherState === state;
+        const matchesCity = city === "All" || publisher.city === city;
         const matchesTopic = topic === "All" || publisher.topics.includes(topic);
 
-        return matchesSearch && matchesLanguage && matchesRegion && matchesTopic;
+        return (
+          matchesSearch && matchesLanguage && matchesState && matchesCity && matchesTopic
+        );
       })
       .sort((a, b) => socialRankScore(b) - socialRankScore(a));
-  }, [language, publishers, region, search, topic]);
+  }, [city, editionLocations, language, publishers, search, state, topic]);
+
+  function handleStateChange(nextState: string) {
+    setState(nextState);
+    setCity("All");
+  }
+
+  function handleReaderStateChange(nextState: string) {
+    setReaderState(nextState);
+    setReaderCity("All");
+  }
+
+  function selectReaderPublisher(publisherId: string) {
+    const nextEdition = editions
+      .filter((edition) => edition.publisherId === publisherId)
+      .sort(compareEditionsForReader)[0];
+
+    setSelectedPublisherId(publisherId);
+    setSelectedEditionId(nextEdition?.id ?? "");
+    setPageIndex(0);
+  }
+
+  useEffect(() => {
+    if (activeView !== "reader" || readerFilteredPublishers.length === 0) {
+      return;
+    }
+
+    if (
+      preferredReaderEdition &&
+      (!selectedEditionId ||
+        (editionHasReadablePageAsset(preferredReaderEdition) &&
+          !editionHasReadablePageAsset(selectedEdition)))
+    ) {
+      window.queueMicrotask(() => {
+        setSelectedPublisherId(preferredReaderEdition.publisherId);
+        setSelectedEditionId(preferredReaderEdition.id);
+        setPageIndex(0);
+      });
+      return;
+    }
+
+    if (!readerFilteredPublishers.some((item) => item.id === selectedPublisherId)) {
+      const nextPublisherId = readerFilteredPublishers[0].id;
+      const nextEdition = editions
+        .filter((edition) => edition.publisherId === nextPublisherId)
+        .sort(compareEditionsForReader)[0];
+
+      window.queueMicrotask(() => {
+        setSelectedPublisherId(nextPublisherId);
+        setSelectedEditionId(nextEdition?.id ?? "");
+        setPageIndex(0);
+      });
+    }
+  }, [
+    activeView,
+    editions,
+    preferredReaderEdition,
+    readerFilteredPublishers,
+    selectedEdition,
+    selectedEditionId,
+    selectedPublisherId,
+  ]);
 
   function openReader(publisher: Publisher) {
     const nextEdition = editions
       .filter((edition) => edition.publisherId === publisher.id)
       .sort(compareEditionsForReader)[0];
 
+    setReaderLanguage(publisher.language);
+    setReaderState(publisherStateName(publisher, editionLocations));
+    setReaderCity(publisher.city);
     setSelectedPublisherId(publisher.id);
     setSelectedEditionId(nextEdition?.id ?? "");
     setPageIndex(0);
@@ -471,14 +722,17 @@ function App() {
                 contentStatus={contentStatus}
                 search={search}
                 language={language}
-                region={region}
+                state={state}
+                city={city}
                 topic={topic}
                 languageOptions={languageOptions}
-                regionOptions={regionOptions}
+                stateOptions={stateOptions}
+                cityOptions={cityOptions}
                 topicOptions={topicOptions}
                 onSearch={setSearch}
                 onLanguage={setLanguage}
-                onRegion={setRegion}
+                onState={handleStateChange}
+                onCity={setCity}
                 onTopic={setTopic}
                 onOpenReader={openReader}
               />
@@ -495,9 +749,20 @@ function App() {
                 publisher={selectedPublisher}
                 edition={selectedEdition}
                 editions={publisherEditions}
+                trendingPublishers={trendingPublishers}
+                readerLanguage={readerLanguage}
+                readerState={readerState}
+                readerCity={readerCity}
+                readerLanguageOptions={readerLanguageOptions}
+                readerStateOptions={readerStateOptions}
+                readerCityOptions={readerCityOptions}
                 pageIndex={pageIndex}
                 zoom={zoom}
                 readerMode={readerMode}
+                onReaderLanguage={setReaderLanguage}
+                onReaderState={handleReaderStateChange}
+                onReaderCity={setReaderCity}
+                onSelectPublisher={selectReaderPublisher}
                 onEditionId={(editionId) => {
                   setSelectedEditionId(editionId);
                   setPageIndex(0);
@@ -542,6 +807,7 @@ function App() {
             element={
               <PublisherClipDetailRoute
                 articles={articles}
+                authUser={authUser}
                 profile={profile}
                 publishers={publishers}
                 userAccess={userAccess}
@@ -688,14 +954,17 @@ interface DashboardProps {
   contentStatus: "loading" | "ready" | "error";
   search: string;
   language: string;
-  region: string;
+  state: string;
+  city: string;
   topic: string;
   languageOptions: string[];
-  regionOptions: string[];
+  stateOptions: string[];
+  cityOptions: string[];
   topicOptions: string[];
   onSearch: (value: string) => void;
   onLanguage: (value: string) => void;
-  onRegion: (value: string) => void;
+  onState: (value: string) => void;
+  onCity: (value: string) => void;
   onTopic: (value: string) => void;
   onOpenReader: (publisher: Publisher) => void;
 }
@@ -706,14 +975,17 @@ function Dashboard({
   contentStatus,
   search,
   language,
-  region,
+  state,
+  city,
   topic,
   languageOptions,
-  regionOptions,
+  stateOptions,
+  cityOptions,
   topicOptions,
   onSearch,
   onLanguage,
-  onRegion,
+  onState,
+  onCity,
   onTopic,
   onOpenReader,
 }: DashboardProps) {
@@ -768,10 +1040,10 @@ function Dashboard({
       </div>
 
       <div className="stat-strip" aria-label="Platform highlights">
-        <Stat icon={<Newspaper size={20} />} label="Publishers" value="42 pilot-ready" />
-        <Stat icon={<Users size={20} />} label="Subscribers" value="48K demo cohort" />
-        <Stat icon={<Share2 size={20} />} label="Social reach" value="1.2M tracked clicks" />
-        <Stat icon={<CircleDollarSign size={20} />} label="Revenue" value="Subscriptions + ads" />
+        <Stat icon={<Newspaper size={32} />} label="Publishers" value="42 pilot-ready" />
+        <Stat icon={<Users size={32} />} label="Subscribers" value="48K demo cohort" />
+        <Stat icon={<Share2 size={32} />} label="Social reach" value="1.2M tracked clicks" />
+        <Stat icon={<CircleDollarSign size={32} />} label="Revenue" value="Subscriptions + ads" />
       </div>
 
       <section className="workspace-panel" id="newspapers">
@@ -798,10 +1070,18 @@ function Dashboard({
           />
           <SelectFilter
             icon={<Globe2 size={18} />}
-            label="Region"
-            value={region}
-            values={regionOptions}
-            onChange={onRegion}
+            label="State"
+            value={state}
+            values={stateOptions}
+            onChange={onState}
+          />
+          <SelectFilter
+            icon={<MapPin size={18} />}
+            label="City"
+            value={city}
+            values={cityOptions}
+            onChange={onCity}
+            disabled={state === "All"}
           />
           <SelectFilter
             icon={<Sparkles size={18} />}
@@ -835,14 +1115,26 @@ interface SelectFilterProps {
   value: string;
   values: string[];
   onChange: (value: string) => void;
+  disabled?: boolean;
 }
 
-function SelectFilter({ icon, label, value, values, onChange }: SelectFilterProps) {
+function SelectFilter({
+  icon,
+  label,
+  value,
+  values,
+  onChange,
+  disabled = false,
+}: SelectFilterProps) {
   return (
-    <label className="select-filter">
+    <label className={`select-filter${disabled ? " is-disabled" : ""}`}>
       {icon}
       <span className="sr-only">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
         {values.map((filterValue) => (
           <option key={filterValue} value={filterValue}>
             {filterValue}
@@ -922,14 +1214,115 @@ interface ReaderViewProps {
   publisher: Publisher;
   edition: Edition;
   editions: Edition[];
+  trendingPublishers: Publisher[];
+  readerLanguage: string;
+  readerState: string;
+  readerCity: string;
+  readerLanguageOptions: string[];
+  readerStateOptions: string[];
+  readerCityOptions: string[];
   pageIndex: number;
   zoom: number;
   readerMode: boolean;
+  onReaderLanguage: (value: string) => void;
+  onReaderState: (value: string) => void;
+  onReaderCity: (value: string) => void;
+  onSelectPublisher: (publisherId: string) => void;
   onPageIndex: (value: number) => void;
   onZoom: (value: number) => void;
   onReaderMode: (value: boolean) => void;
   onEditionId: (value: string) => void;
   onOpenArticle: (articleId: string) => void;
+}
+
+interface TrendingPublisherCarouselProps {
+  publishers: Publisher[];
+  selectedPublisherId: string;
+  onSelect: (publisherId: string) => void;
+}
+
+function TrendingPublisherCarousel({
+  publishers,
+  selectedPublisherId,
+  onSelect,
+}: TrendingPublisherCarouselProps) {
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  function scrollCarousel(direction: "left" | "right") {
+    trackRef.current?.scrollBy({
+      left: direction === "left" ? -280 : 280,
+      behavior: "smooth",
+    });
+  }
+
+  return (
+    <section className="reader-carousel" aria-label="Trending newspapers">
+      <div className="reader-carousel-header">
+        <div>
+          <span className="eyebrow">Most followed</span>
+          <h3>Trending newspapers</h3>
+        </div>
+        <div className="reader-carousel-controls">
+          <button
+            type="button"
+            aria-label="Scroll trending newspapers left"
+            onClick={() => scrollCarousel("left")}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            type="button"
+            aria-label="Scroll trending newspapers right"
+            onClick={() => scrollCarousel("right")}
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+
+      {publishers.length === 0 ? (
+        <p className="empty-state reader-carousel-empty">
+          No newspapers match these filters yet.
+        </p>
+      ) : (
+        <div className="reader-carousel-track" ref={trackRef}>
+          {publishers.map((item, index) => (
+            <button
+              type="button"
+              key={item.id}
+              className={`reader-carousel-card${item.id === selectedPublisherId ? " active" : ""}`}
+              onClick={() => onSelect(item.id)}
+            >
+              <div className="reader-carousel-card-head">
+                <div className="reader-carousel-card-main">
+                  <div className="publisher-logo">{item.logo}</div>
+                  <div className="reader-carousel-copy">
+                    <div className="reader-carousel-title-row">
+                      <strong>{item.name}</strong>
+                      {item.isLeading && (
+                        <span className="reader-carousel-badge">
+                          <TrendingUp size={12} />
+                          Trending
+                        </span>
+                      )}
+                    </div>
+                    <span>
+                      {item.city} • {item.language}
+                    </span>
+                    <small>
+                      <Users size={12} />
+                      {compactNumber(item.subscriberCount)} followers
+                    </small>
+                  </div>
+                </div>
+                <span className="reader-carousel-rank">#{index + 1}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function ReaderView({
@@ -940,9 +1333,20 @@ function ReaderView({
   publisher,
   edition,
   editions,
+  trendingPublishers,
+  readerLanguage,
+  readerState,
+  readerCity,
+  readerLanguageOptions,
+  readerStateOptions,
+  readerCityOptions,
   pageIndex,
   zoom,
   readerMode,
+  onReaderLanguage,
+  onReaderState,
+  onReaderCity,
+  onSelectPublisher,
   onPageIndex,
   onZoom,
   onReaderMode,
@@ -954,243 +1358,391 @@ function ReaderView({
   const pageArticles = articles.filter(
     (article) => page && article.pageId === page.id && canReadArticle(article, profile, userAccess),
   );
+  const editionPageSummaries = edition.pages.map((editionPage, index) => {
+    const readableArticles = articles.filter(
+      (article) =>
+        article.pageId === editionPage.id && canReadArticle(article, profile, userAccess),
+    );
+
+    return {
+      page: editionPage,
+      index,
+      articleCount: readableArticles.length,
+      impressions: readableArticles.reduce(
+        (sum, article) => sum + article.stats.views,
+        0,
+      ),
+      likes: readableArticles.reduce(
+        (sum, article) => sum + (article.stats.likes ?? 0),
+        0,
+      ),
+      comments: readableArticles.reduce(
+        (sum, article) => sum + article.stats.comments,
+        0,
+      ),
+      shares: readableArticles.reduce(
+        (sum, article) => sum + article.stats.shares,
+        0,
+      ),
+    };
+  });
+  const pageHotspots = useMemo(() => {
+    if (!page) {
+      return [];
+    }
+
+    const articleHotspots = pageArticles
+      .filter(
+        (article) =>
+          article.blockGeometry &&
+          !page.hotspots.some((hotspot) => hotspot.articleId === article.id),
+      )
+      .map((article) => ({
+        id: `article-${article.id}`,
+        articleId: article.id,
+        label: article.section,
+        x: article.blockGeometry!.x,
+        y: article.blockGeometry!.y,
+        width: article.blockGeometry!.width,
+        height: article.blockGeometry!.height,
+      }));
+
+    return [...page.hotspots, ...articleHotspots];
+  }, [page, pageArticles]);
   const hasPages = edition.pages.length > 0;
-  const hasSourceAsset = Boolean(edition.sourceAssetUrl);
-  const isPdfSource = edition.sourceAssetType === "application/pdf";
+  const hasPageImage = Boolean(page?.imageUrl);
 
   return (
     <section className="reader-layout">
-      <aside className="reader-sidebar">
-        <div>
-          <span className="eyebrow">Selected paper</span>
-          <h2>{publisher.name}</h2>
+      <header className="reader-discovery workspace-panel">
+        <div className="reader-discovery-heading">
+          <span className="eyebrow">E-paper reader</span>
+          <h2>Pick a trending paper and read page by page</h2>
           <p>
-            {publisher.city} edition • {edition.date}
+            Filter by state, city, and language, then open clipped stories with live
+            impressions and subscriber discussion.
           </p>
-          {authUser && (
-            <span className="access-chip">
-              {hasPublisherSubscription(userAccess, publisher.id)
-                ? "Subscriber access"
-                : canManagePublisher(profile, userAccess, publisher.id)
-                  ? "Publisher staff"
-                  : "Reader access"}
-            </span>
-          )}
         </div>
 
-        <label className="edition-select">
-          <span>Edition</span>
-          <select
-            value={edition.id}
-            onChange={(event) => onEditionId(event.target.value)}
-          >
-            {editions.length === 0 ? (
-              <option value={edition.id}>{edition.title}</option>
-            ) : (
-              editions.map((publisherEdition) => (
-                <option key={publisherEdition.id} value={publisherEdition.id}>
-                  {publisherEdition.title} • {publisherEdition.date} •{" "}
-                  {formatRole(publisherEdition.status)}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-
-        <div className="edition-controls">
-          <button
-            onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
-            disabled={!hasPages || pageIndex === 0}
-            aria-label="Previous page"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <span>
-            Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
-          </span>
-          <button
-            onClick={() => onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))}
-            disabled={!hasPages || pageIndex === edition.pages.length - 1}
-            aria-label="Next page"
-          >
-            <ChevronRight size={18} />
-          </button>
+        <div className="reader-filters">
+          <SelectFilter
+            icon={<Filter size={18} />}
+            label="Language"
+            value={readerLanguage}
+            values={readerLanguageOptions}
+            onChange={onReaderLanguage}
+          />
+          <SelectFilter
+            icon={<Globe2 size={18} />}
+            label="State"
+            value={readerState}
+            values={readerStateOptions}
+            onChange={onReaderState}
+          />
+          <SelectFilter
+            icon={<MapPin size={18} />}
+            label="City"
+            value={readerCity}
+            values={readerCityOptions}
+            onChange={onReaderCity}
+            disabled={readerState === "All"}
+          />
         </div>
 
-        <div className="tool-row">
-          <button onClick={() => onZoom(Math.max(0.85, zoom - 0.1))} aria-label="Zoom out">
-            <ZoomOut size={18} />
-          </button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <button onClick={() => onZoom(Math.min(1.25, zoom + 0.1))} aria-label="Zoom in">
-            <ZoomIn size={18} />
-          </button>
-          <button onClick={() => onZoom(1)} aria-label="Fit page">
-            <Fullscreen size={18} />
-          </button>
-          <button
-            className={readerMode ? "active" : ""}
-            onClick={() => onReaderMode(!readerMode)}
-            aria-pressed={readerMode}
-          >
-            Reader mode
-          </button>
-        </div>
+        <TrendingPublisherCarousel
+          publishers={trendingPublishers}
+          selectedPublisherId={publisher.id}
+          onSelect={onSelectPublisher}
+        />
+      </header>
 
-        <div className="section-list">
-          {edition.pages.map((editionPage, index) => (
-            <button
-              className={index === pageIndex ? "active" : ""}
-              key={editionPage.id}
-              onClick={() => onPageIndex(index)}
-            >
-              {editionPage.section}
-            </button>
-          ))}
-        </div>
-
-        {hasSourceAsset && (
-          <div className="source-asset-card">
-            <span className="eyebrow">Uploaded issue</span>
-            <strong>{edition.sourceAssetName ?? "Source edition file"}</strong>
-            <p>
-              This is the original publisher upload. PaperLoop preview pages and clips are
-              generated on top of it.
-            </p>
-            <a href={edition.sourceAssetUrl} target="_blank" rel="noreferrer">
-              <Newspaper size={16} />
-              Open source {isPdfSource ? "PDF" : "asset"}
-            </a>
-          </div>
-        )}
-
-        <div className="ad-card">
-          <span className="eyebrow">Print to digital ad</span>
-          <strong>Local coaching sponsor</strong>
-          <p>Targeted to education articles, parents, and Jabalpur subscribers.</p>
-        </div>
-      </aside>
-
-      <div className="reader-main">
-        {!canReadSelectedEdition && (
-          <section className="locked-panel" role="status">
-            <Lock size={22} />
-            <div>
-              <strong>Subscriber edition</strong>
-              <p>Sign in with an eligible subscription or publisher staff account to read this edition.</p>
+      <div className="reader-workspace">
+        <div className="reader-main">
+          <div className="reader-control-bar">
+            <div className="reader-control-group">
+              <span className="eyebrow">Now reading</span>
+              <strong>{publisher.name}</strong>
+              <span>
+                {publisher.city} • {edition.date}
+              </span>
+              {authUser && (
+                <span className="access-chip">
+                  {hasPublisherSubscription(userAccess, publisher.id)
+                    ? "Subscriber access"
+                    : canManagePublisher(profile, userAccess, publisher.id)
+                      ? "Publisher staff"
+                      : "Reader access"}
+                </span>
+              )}
             </div>
-          </section>
-        )}
 
-        <div className="viewer-toolbar">
-          <div>
-            <span className="eyebrow">Full-page e-paper</span>
-            <h1>{page?.headline ?? edition.title}</h1>
-          </div>
-          <div className="viewer-actions">
-            <button>
-              <Bookmark size={18} />
-              Save edition
-            </button>
-            <button>
-              <Share2 size={18} />
-              Share page
-            </button>
-          </div>
-        </div>
-
-        {hasSourceAsset && (
-          <section className="source-asset-reader">
-            <div>
-              <span className="eyebrow">Original upload</span>
-              <strong>{edition.sourceAssetName ?? "Source edition file"}</strong>
-            </div>
-            {isPdfSource ? (
-              <iframe
-                src={edition.sourceAssetUrl}
-                title={`${edition.title} uploaded PDF`}
-              />
-            ) : (
-              <img
-                src={edition.sourceAssetUrl}
-                alt={`${edition.title} uploaded page`}
-              />
-            )}
-          </section>
-        )}
-
-        <div className={`paper-stage ${readerMode ? "reader-mode" : ""}`}>
-          {hasPages && page ? (
-          <div className="paper-page" style={{ transform: `scale(${zoom})` }}>
-            <header>
-              <span>{publisher.name}</span>
-              <small>{edition.date}</small>
-            </header>
-            <h2>{page.headline}</h2>
-            <p>{page.subhead}</p>
-            <div className="mock-photo" />
-            <div className="paper-body-grid">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="paper-side-ad">Sponsored</div>
-            {page.hotspots.map((hotspot) => (
-              <button
-                className="hotspot"
-                key={hotspot.id}
-                style={{
-                  left: `${hotspot.x}%`,
-                  top: `${hotspot.y}%`,
-                  width: `${hotspot.width}%`,
-                  height: `${hotspot.height}%`,
-                }}
-                onClick={() => onOpenArticle(hotspot.articleId)}
+            <label className="edition-select compact">
+              <span>Edition</span>
+              <select
+                value={edition.id}
+                onChange={(event) => onEditionId(event.target.value)}
               >
-                <span>{hotspot.label}</span>
+                {editions.length === 0 ? (
+                  <option value={edition.id}>{edition.title}</option>
+                ) : (
+                  editions.map((publisherEdition) => (
+                    <option key={publisherEdition.id} value={publisherEdition.id}>
+                      {publisherEdition.title} • {publisherEdition.date} •{" "}
+                      {formatRole(publisherEdition.status)}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+
+            <div className="edition-controls">
+              <button
+                onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
+                disabled={!hasPages || pageIndex === 0}
+                aria-label="Previous page"
+              >
+                <ChevronLeft size={18} />
               </button>
-            ))}
+              <span>
+                Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
+              </span>
+              <button
+                onClick={() =>
+                  onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
+                }
+                disabled={!hasPages || pageIndex === edition.pages.length - 1}
+                aria-label="Next page"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+
+            <div className="tool-row">
+              <button onClick={() => onZoom(Math.max(0.85, zoom - 0.1))} aria-label="Zoom out">
+                <ZoomOut size={18} />
+              </button>
+              <span>{Math.round(zoom * 100)}%</span>
+              <button onClick={() => onZoom(Math.min(1.25, zoom + 0.1))} aria-label="Zoom in">
+                <ZoomIn size={18} />
+              </button>
+              <button onClick={() => onZoom(1)} aria-label="Fit page">
+                <Fullscreen size={18} />
+              </button>
+              <button
+                className={readerMode ? "active" : ""}
+                onClick={() => onReaderMode(!readerMode)}
+                aria-pressed={readerMode}
+              >
+                Reader mode
+              </button>
+            </div>
           </div>
-          ) : (
-            <div className="empty-reader-page">
-              <Newspaper size={36} />
-              <strong>Preview pages are not generated yet</strong>
-              <p>
-                Publisher staff can generate a page preview from the Admin workspace before this
-                edition becomes readable.
-              </p>
+
+          {!canReadSelectedEdition && (
+            <section className="locked-panel" role="status">
+              <Lock size={22} />
+              <div>
+                <strong>Subscriber edition</strong>
+                <p>
+                  Sign in with an eligible subscription or publisher staff account to read
+                  this edition.
+                </p>
+              </div>
+            </section>
+          )}
+
+          <div className="viewer-toolbar">
+            <div>
+              <span className="eyebrow">Full-page e-paper</span>
+              <h1>{page?.headline ?? edition.title}</h1>
+            </div>
+            <div className="viewer-actions">
+              <button type="button">
+                <Bookmark size={18} />
+                Save edition
+              </button>
+              <button type="button">
+                <Share2 size={18} />
+                Share page
+              </button>
+            </div>
+          </div>
+
+          {hasPages && page && (
+            <div className="reader-page-sections">
+              {edition.pages.map((editionPage, index) => (
+                <button
+                  type="button"
+                  className={index === pageIndex ? "active" : ""}
+                  key={editionPage.id}
+                  onClick={() => onPageIndex(index)}
+                >
+                  {editionPage.section}
+                </button>
+              ))}
             </div>
           )}
+
+          <div
+            className={`paper-stage ${readerMode ? "reader-mode" : ""}${hasPageImage ? " has-page-image" : ""}`}
+          >
+            {hasPages && page ? (
+              <div
+                className={`reader-page-stage${hasPageImage ? " has-image" : ""}`}
+                style={{ transform: `scale(${zoom})` }}
+              >
+                {hasPageImage ? (
+                  <img
+                    src={page.imageUrl}
+                    alt={`${publisher.name} page ${page.pageNumber} - ${page.section}`}
+                  />
+                ) : (
+                  <div className="reader-page-placeholder">
+                    <span className="eyebrow">
+                      {publisher.name} • Page {page.pageNumber}
+                    </span>
+                    <strong>{page.headline}</strong>
+                    <p>{page.subhead}</p>
+                    <p className="reader-page-placeholder-note">
+                      Page preview is still processing. Use the story list on the right to
+                      open available clips.
+                    </p>
+                  </div>
+                )}
+                {pageHotspots.map((hotspot) => (
+                  <button
+                    type="button"
+                    className="hotspot"
+                    key={hotspot.id}
+                    style={{
+                      left: `${hotspot.x}%`,
+                      top: `${hotspot.y}%`,
+                      width: `${hotspot.width}%`,
+                      height: `${hotspot.height}%`,
+                    }}
+                    onClick={() => onOpenArticle(hotspot.articleId)}
+                  >
+                    <span>{hotspot.label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-reader-page">
+                <Newspaper size={36} />
+                <strong>Edition pages are not ready yet</strong>
+                <p>
+                  Publisher staff can generate readable page previews from the Admin workspace
+                  before this edition opens in the reader.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
 
-        <section className="article-strip">
-          <h3>Article posts from this page</h3>
-          <div className="article-list">
+        <aside className="reader-posts-panel">
+          <div className="section-heading compact">
+            <span className="eyebrow">Page {page?.pageNumber ?? 0}</span>
+            <h2>{page?.section ?? "Sections"}</h2>
+            <p>Stories and clips from the page you are viewing.</p>
+          </div>
+
+          {editionPageSummaries.length > 0 && (
+            <div className="reader-page-list">
+              {editionPageSummaries.map((summary) => (
+                <article
+                  className={`reader-page-card${summary.index === pageIndex ? " active" : ""}`}
+                  key={summary.page.id}
+                >
+                  <div>
+                    <span>Page {summary.page.pageNumber}</span>
+                    <strong>{summary.page.section}</strong>
+                  </div>
+                  <div className="reader-post-metrics">
+                    <span>
+                      <Newspaper size={14} />
+                      {summary.articleCount} clips
+                    </span>
+                    <span>
+                      <Eye size={14} />
+                      {summary.impressions.toLocaleString()} impressions
+                    </span>
+                    <span>
+                      <Heart size={14} />
+                      {summary.likes.toLocaleString()} likes
+                    </span>
+                    <span>
+                      <MessageCircle size={14} />
+                      {summary.comments.toLocaleString()} comments
+                    </span>
+                    <span>
+                      <Share2 size={14} />
+                      {summary.shares.toLocaleString()} shares
+                    </span>
+                  </div>
+                  <button type="button" onClick={() => onPageIndex(summary.index)}>
+                    Read page
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <div className="reader-post-list">
             {pageArticles.length === 0 ? (
               <div className="empty-article-card">
                 <Sparkles size={20} />
-                <strong>Article clipping coming next</strong>
+                <strong>Clips coming next</strong>
                 <p>
-                  This published preview page is readable now. Editors will add clickable story
-                  blocks, OCR text, and discussion threads in the clipping workflow.
+                  Published preview pages are readable now. Editors add clickable story
+                  blocks and discussion threads in the clipping workflow.
                 </p>
               </div>
             ) : (
               pageArticles.map((article) => (
-              <button key={article.id} onClick={() => onOpenArticle(article.id)}>
-                <span>{article.section}</span>
-                <strong>{article.title}</strong>
-                <small>
-                  {article.stats.views.toLocaleString()} views • {article.stats.comments} comments
-                </small>
-              </button>
+                <button
+                  type="button"
+                  className="reader-post-card"
+                  key={article.id}
+                  onClick={() => onOpenArticle(article.id)}
+                >
+                  <span>{article.section}</span>
+                  <strong>{article.title}</strong>
+                  <p>{article.summary}</p>
+                  <div className="reader-post-metrics">
+                    <span>
+                      <Eye size={14} />
+                      {article.stats.views.toLocaleString()} impressions
+                    </span>
+                    <span>
+                      <MessageCircle size={14} />
+                      {article.stats.comments} comments
+                    </span>
+                    <span>
+                      <Heart size={14} />
+                      {(article.stats.likes ?? 0).toLocaleString()} likes
+                    </span>
+                    <span>
+                      <Share2 size={14} />
+                      {article.stats.shares.toLocaleString()} shares
+                    </span>
+                  </div>
+                  <small>Read this clip and join the discussion</small>
+                </button>
               ))
             )}
           </div>
-        </section>
+
+          {authUser ? (
+            <p className="reader-post-hint">
+              Signed in as {authUser.displayName ?? authUser.email}. Select a story to
+              read the full post and comment.
+            </p>
+          ) : (
+            <p className="reader-post-hint">
+              Sign in to like, save, and post comments on clipped stories.
+            </p>
+          )}
+        </aside>
       </div>
     </section>
   );
@@ -1215,6 +1767,7 @@ interface ArticleRouteProps {
 
 interface PublisherClipDetailRouteProps {
   articles: ArticlePost[];
+  authUser: User | null;
   profile: UserProfile | null;
   publishers: Publisher[];
   userAccess: UserAccess;
@@ -1222,6 +1775,7 @@ interface PublisherClipDetailRouteProps {
 
 function PublisherClipDetailRoute({
   articles,
+  authUser,
   profile,
   publishers,
   userAccess,
@@ -1230,7 +1784,27 @@ function PublisherClipDetailRoute({
   const navigate = useNavigate();
   const [detail, setDetail] = useState<PublisherArticlePostDetail | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const fallbackArticle = articles.find((article) => article.id === articleId) ?? null;
+  const [article, setArticle] = useState<ArticlePost | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSection, setEditSection] = useState("");
+  const [editHotspotLabel, setEditHotspotLabel] = useState("");
+  const [editSummary, setEditSummary] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editAccessRule, setEditAccessRule] = useState<AccessRule>("public");
+  const [editDiscussionRule, setEditDiscussionRule] =
+    useState<DiscussionRule>("logged_in");
+  const [editBlockType, setEditBlockType] = useState<ArticleBlockType>("article");
+  const [editStatus, setEditStatus] = useState<"idle" | "saving" | "success" | "error">(
+    "idle",
+  );
+  const [editMessage, setEditMessage] = useState("");
+  const [clipImageFile, setClipImageFile] = useState<File | null>(null);
+  const [clipImageStatus, setClipImageStatus] = useState<
+    "idle" | "uploading" | "success" | "error"
+  >("idle");
+  const [clipImageMessage, setClipImageMessage] = useState("");
+  const clipImageInputRef = useRef<HTMLInputElement>(null);
+  const fallbackArticle = articles.find((item) => item.id === articleId) ?? null;
   const manageablePublisherIds = useMemo(
     () =>
       canManagePlatform(profile)
@@ -1238,6 +1812,14 @@ function PublisherClipDetailRoute({
         : userAccess.staffPublisherIds,
     [profile, publishers, userAccess.staffPublisherIds],
   );
+  const block = detail?.block ?? null;
+  const comments = detail?.comments ?? [];
+  const engagements = detail?.engagements ?? [];
+
+  function returnToEditionStudio(post: ArticlePost) {
+    writeEditionStudioContext(articleStudioContext(post));
+    navigate(EDITION_STUDIO_PATH);
+  }
 
   useEffect(() => {
     let active = true;
@@ -1245,6 +1827,9 @@ function PublisherClipDetailRoute({
     if (!articleId || !canOpenAdminWorkspace(profile, userAccess)) {
       return undefined;
     }
+
+    setStatus("loading");
+    setDetail(null);
 
     getPublisherArticlePostDetail(articleId, manageablePublisherIds)
       .then((nextDetail) => {
@@ -1260,7 +1845,9 @@ function PublisherClipDetailRoute({
 
         if (
           fallbackArticle &&
-          manageablePublisherIds.includes(fallbackArticle.publisherId)
+          manageablePublisherIds.some((publisherId) =>
+            samePublisherId(publisherId, fallbackArticle.publisherId),
+          )
         ) {
           setDetail({
             article: fallbackArticle,
@@ -1289,6 +1876,158 @@ function PublisherClipDetailRoute({
     };
   }, [articleId, fallbackArticle, manageablePublisherIds, profile, userAccess]);
 
+  useEffect(() => {
+    if (!detail) {
+      return;
+    }
+
+    const nextArticle = detail.article;
+
+    setArticle(nextArticle);
+    setEditTitle(nextArticle.title);
+    setEditSection(nextArticle.section);
+    setEditSummary(nextArticle.summary);
+    setEditBody(nextArticle.body);
+    setEditAccessRule(nextArticle.accessRule);
+    setEditDiscussionRule(nextArticle.discussionRule);
+    setEditBlockType(detail.block?.type ?? "article");
+    setEditHotspotLabel(nextArticle.title);
+    setEditStatus("idle");
+    setEditMessage("");
+    setClipImageFile(null);
+    setClipImageStatus("idle");
+    setClipImageMessage("");
+    if (clipImageInputRef.current) {
+      clipImageInputRef.current.value = "";
+    }
+
+    let active = true;
+
+    getEditionById(nextArticle.editionId).then((edition) => {
+      if (!active || !edition) {
+        return;
+      }
+
+      setEditHotspotLabel(getHotspotLabelForArticle(edition, nextArticle));
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [detail]);
+
+  async function handlePostUpdate(regenerateClipImage = false) {
+    if (!authUser || !article || !block) {
+      setEditStatus("error");
+      setEditMessage("Sign in and link this post to a saved clip before updating.");
+      return;
+    }
+
+    setEditStatus("saving");
+    setEditMessage("");
+
+    try {
+      const geometry = normalizeBlockGeometry(block);
+      const result = await updatePublisherArticlePost(
+        {
+          articleId: article.id,
+          editionId: article.editionId,
+          pageId: article.pageId,
+          blockId: block.id,
+          type: editBlockType,
+          title: editTitle,
+          section: editSection,
+          summary: editSummary,
+          body: editBody,
+          authorName: article.author.name,
+          accessRule: editAccessRule,
+          discussionRule: editDiscussionRule,
+          hotspotLabel: editHotspotLabel,
+          regenerateClipImage,
+          ...geometry,
+        },
+        authUser,
+      );
+
+      setDetail((currentDetail) =>
+        currentDetail
+          ? {
+              ...currentDetail,
+              article: result.article,
+              block: result.block ?? currentDetail.block,
+            }
+          : currentDetail,
+      );
+      setArticle(result.article);
+      setEditHotspotLabel(getHotspotLabelForArticle(result.edition, result.article));
+      setEditStatus("success");
+      setEditMessage(
+        regenerateClipImage
+          ? "Post and clip image updated."
+          : "Post details updated.",
+      );
+    } catch (error) {
+      setEditStatus("error");
+      setEditMessage(
+        error instanceof Error ? error.message : "Unable to update this post.",
+      );
+    }
+  }
+
+  function handleClipImageFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.target.files?.[0] ?? null;
+    setClipImageFile(nextFile);
+    setClipImageStatus("idle");
+    setClipImageMessage("");
+  }
+
+  async function handleClipImageUpload() {
+    if (!authUser || !article || !clipImageFile) {
+      setClipImageStatus("error");
+      setClipImageMessage("Choose an image file before uploading.");
+      return;
+    }
+
+    setClipImageStatus("uploading");
+    setClipImageMessage("");
+
+    try {
+      const result = await uploadPublisherClipImage(
+        {
+          articleId: article.id,
+          editionId: article.editionId,
+          pageId: article.pageId,
+          publisherId: article.publisherId,
+          blockId: block?.id,
+          imageFile: clipImageFile,
+        },
+        authUser,
+      );
+
+      setDetail((currentDetail) =>
+        currentDetail
+          ? {
+              ...currentDetail,
+              article: result.article,
+              block: result.block ?? currentDetail.block,
+            }
+          : currentDetail,
+      );
+      setArticle(result.article);
+      setClipImageFile(null);
+      if (clipImageInputRef.current) {
+        clipImageInputRef.current.value = "";
+      }
+      setClipImageStatus("success");
+      setClipImageMessage("Clip image replaced.");
+    } catch (error) {
+      setClipImageStatus("error");
+      setClipImageMessage(
+        error instanceof Error ? error.message : "Unable to upload this clip image.",
+      );
+    }
+  }
+
   if (!canOpenAdminWorkspace(profile, userAccess)) {
     return (
       <section className="admin-layout">
@@ -1306,12 +2045,12 @@ function PublisherClipDetailRoute({
   if (status === "loading") {
     return (
       <section className="admin-layout">
-        <p className="empty-state">Loading clip engagement...</p>
+        <p className="empty-state">Loading clip post...</p>
       </section>
     );
   }
 
-  if (!detail) {
+  if (!detail || !article) {
     return (
       <section className="admin-layout">
         <button className="back-button" onClick={() => navigate(EDITION_STUDIO_PATH)}>
@@ -1323,13 +2062,20 @@ function PublisherClipDetailRoute({
     );
   }
 
-  const { article, block, comments, engagements } = detail;
   const engagementCounts = countEngagements(article, engagements, comments);
   const publisher = publishers.find((item) => item.id === article.publisherId);
+  const visibleEngagementEvents = engagements.length
+    ? engagements.slice(0, 20).map((event) => ({
+        id: event.id,
+        label: formatRole(event.type),
+        actor: event.userId ?? "reader",
+        date: formatActivityDate(event.createdAt),
+      }))
+    : buildEngagementSummaryEvents(engagementCounts);
 
   return (
     <section className="admin-layout clip-detail-layout">
-      <button className="back-button" onClick={() => navigate(EDITION_STUDIO_PATH)}>
+      <button className="back-button" onClick={() => returnToEditionStudio(article)}>
         <ArrowLeft size={18} />
         Back to edition studio
       </button>
@@ -1344,36 +2090,152 @@ function PublisherClipDetailRoute({
       </div>
 
       <div className="clip-detail-grid">
-        <article className="article-panel clip-detail-panel">
+        <section className="workspace-panel clip-post-editor">
+          <div className="section-heading compact">
+            <span className="eyebrow">Publisher tools</span>
+            <h2>Edit post &amp; clip</h2>
+          </div>
+
           {article.clippedImageUrl ? (
-            <figure className="article-clip-image">
+            <figure className="article-clip-image clip-detail-preview">
               <img src={article.clippedImageUrl} alt={article.title} />
-              <figcaption>
-                Storage: {article.clippedImagePath ?? "saved clipping URL"}
-              </figcaption>
+              <figcaption>Current clipped image</figcaption>
             </figure>
           ) : (
-            <div className={`clip-visual ${article.clippedImageTone}`}>
+            <div className={`clip-visual clip-detail-preview ${article.clippedImageTone}`}>
               <span>{article.section}</span>
             </div>
           )}
-          <div className="article-content">
-            <div className="article-kicker">
-              <span>{formatRole(article.status)}</span>
-              <span>{formatRole(article.accessRule)}</span>
-              <span>{formatRole(article.discussionRule)}</span>
+
+          <form
+            className="article-block-form compact"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handlePostUpdate(false);
+            }}
+          >
+            <div className="clip-image-upload">
+              <label>
+                <span>Replace clip image</span>
+                <input
+                  ref={clipImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={clipImageStatus === "uploading"}
+                  onChange={handleClipImageFileChange}
+                />
+              </label>
+              {clipImageFile && (
+                <p className="clip-image-file-name">Selected: {clipImageFile.name}</p>
+              )}
+              <div className="clip-image-upload-actions">
+                <button
+                  type="button"
+                  disabled={!clipImageFile || clipImageStatus === "uploading"}
+                  onClick={() => void handleClipImageUpload()}
+                >
+                  <FileUp size={16} />
+                  {clipImageStatus === "uploading" ? "Uploading..." : "Upload & replace image"}
+                </button>
+              </div>
+              {clipImageMessage && (
+                <p className={`action-feedback ${clipImageStatus}`}>{clipImageMessage}</p>
+              )}
             </div>
-            <h2>Customer-facing post</h2>
-            <p className="summary">{article.summary}</p>
-            <p>{article.body}</p>
-            <div className="clip-source-list">
-              <span>articlePosts/{article.id}</span>
-              <span>editions/{article.editionId}</span>
-              <span>pageAssets/{article.pageId}</span>
-              {article.sourceBlockId && <span>articleBlocks/{article.sourceBlockId}</span>}
+
+            <div className="form-grid">
+              <label>
+                <span>Type</span>
+                <select
+                  value={editBlockType}
+                  onChange={(event) =>
+                    setEditBlockType(event.target.value as ArticleBlockType)
+                  }
+                  disabled={!block || editStatus === "saving"}
+                >
+                  {blockTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {formatRole(type)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Section</span>
+                <input
+                  value={editSection}
+                  onChange={(event) => setEditSection(event.target.value)}
+                  disabled={editStatus === "saving"}
+                />
+              </label>
+              <label>
+                <span>Title</span>
+                <input
+                  value={editTitle}
+                  onChange={(event) => setEditTitle(event.target.value)}
+                  disabled={editStatus === "saving"}
+                />
+              </label>
+              <label>
+                <span>Hotspot label</span>
+                <input
+                  value={editHotspotLabel}
+                  onChange={(event) => setEditHotspotLabel(event.target.value)}
+                  disabled={editStatus === "saving"}
+                />
+              </label>
+              <label className="studio-field-wide">
+                <span>Summary</span>
+                <textarea
+                  value={editSummary}
+                  onChange={(event) => setEditSummary(event.target.value)}
+                  rows={3}
+                  disabled={editStatus === "saving"}
+                />
+              </label>
+              <label className="studio-field-wide">
+                <span>Body</span>
+                <textarea
+                  value={editBody}
+                  onChange={(event) => setEditBody(event.target.value)}
+                  rows={4}
+                  disabled={editStatus === "saving"}
+                />
+              </label>
             </div>
-          </div>
-        </article>
+            <div className="published-post-links">
+              <a
+                className="text-link-btn"
+                href={`/article/${article.id}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink size={15} />
+                Preview as reader
+              </a>
+            </div>
+            <div className="section-panel-actions">
+              <button type="submit" disabled={editStatus === "saving" || !block}>
+                {editStatus === "saving" ? "Saving..." : "Save post changes"}
+              </button>
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={editStatus === "saving" || !block}
+                onClick={() => void handlePostUpdate(true)}
+              >
+                Regenerate from page
+              </button>
+            </div>
+            {editMessage && <p className={`action-feedback ${editStatus}`}>{editMessage}</p>}
+            {!block && (
+              <p className="clip-post-empty">
+                This post is not linked to a saved clip block, so rectangle and image updates are
+                unavailable here. Edit it from edition studio instead.
+              </p>
+            )}
+          </form>
+        </section>
 
         <aside className="workspace-panel clip-detail-card">
           <div className="section-heading compact">
@@ -1450,14 +2312,14 @@ function PublisherClipDetailRoute({
             <h2>Likes, saves, shares, and reports</h2>
           </div>
           <div className="engagement-event-list">
-            {engagements.length === 0 ? (
+            {visibleEngagementEvents.length === 0 ? (
               <p className="empty-state">No engagement events recorded yet.</p>
             ) : (
-              engagements.slice(0, 20).map((event) => (
+              visibleEngagementEvents.map((event) => (
                 <article key={event.id}>
-                  <span>{formatRole(event.type)}</span>
-                  <strong>{event.userId ?? "reader"}</strong>
-                  <small>{formatActivityDate(event.createdAt)}</small>
+                  <span>{event.label}</span>
+                  <strong>{event.actor}</strong>
+                  <small>{event.date}</small>
                 </article>
               ))
             )}
@@ -1757,6 +2619,20 @@ function countEngagements(
   };
 }
 
+function buildEngagementSummaryEvents(counts: {
+  likes: number;
+  saves: number;
+  shares: number;
+  comments: number;
+}) {
+  return [
+    { id: "likes-summary", label: "Like", actor: `${counts.likes} reader actions`, date: "Seeded stats" },
+    { id: "saves-summary", label: "Save", actor: `${counts.saves} reader actions`, date: "Seeded stats" },
+    { id: "shares-summary", label: "Share", actor: `${counts.shares} reader actions`, date: "Seeded stats" },
+    { id: "comments-summary", label: "Comment", actor: `${counts.comments} reader actions`, date: "Seeded stats" },
+  ].filter((event) => !event.actor.startsWith("0 "));
+}
+
 function formatActivityDate(value: unknown) {
   if (value && typeof value === "object" && "toDate" in value) {
     return (value as { toDate: () => Date }).toDate().toLocaleString("en-IN", {
@@ -1803,12 +2679,29 @@ function compactNumber(value = 0) {
 function compareEditionsForReader(a: Edition, b: Edition) {
   const statusRank = (edition: Edition) => (edition.status === "published" ? 1 : 0);
   const pageRank = (edition: Edition) => (edition.pages.length > 0 ? 1 : 0);
+  const imageRank = (edition: Edition) =>
+    edition.pages.some((page) => page.imageUrl || page.thumbnailUrl) ? 1 : 0;
 
   return (
+    imageRank(b) - imageRank(a) ||
     statusRank(b) - statusRank(a) ||
     pageRank(b) - pageRank(a) ||
     b.date.localeCompare(a.date)
   );
+}
+
+function readerEditionRank(edition: Edition, articles: ArticlePost[]) {
+  const pageImageScore = editionHasReadablePageAsset(edition) ? 10000 : 0;
+  const clipScore = articles.filter((article) => article.editionId === edition.id).length * 250;
+  const pageScore = edition.pages.length * 20;
+  const statusScore = edition.status === "published" ? 100 : 0;
+  const dateScore = Date.parse(edition.date) || 0;
+
+  return pageImageScore + clipScore + pageScore + statusScore + dateScore / 100000000000;
+}
+
+function editionHasReadablePageAsset(edition: Edition) {
+  return edition.pages.some((page) => page.imageUrl || page.thumbnailUrl);
 }
 
 function createPlaceholderEdition(publisher: Publisher): Edition {
@@ -1882,6 +2775,23 @@ function clampPercent(value: number) {
   }
 
   return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+}
+
+function formatPageClipLabel(pageBlocks: ArticleBlock[]) {
+  return `#${pageBlocks.length + 1} clip`;
+}
+
+function isGenericClipLabel(label: string) {
+  const normalized = label.trim().toLowerCase();
+
+  return normalized === "new clip" || normalized === "manual block";
+}
+
+function getHotspotLabelForArticle(edition: Edition | null, article: ArticlePost) {
+  const page = edition?.pages.find((pageItem) => pageItem.id === article.pageId);
+  const hotspot = page?.hotspots.find((hotspotItem) => hotspotItem.articleId === article.id);
+
+  return hotspot?.label ?? article.title;
 }
 
 function buildPublisherStats(
@@ -1993,6 +2903,7 @@ function AdminView({
   userAccess,
 }: AdminViewProps) {
   const navigate = useNavigate();
+  const restoredStudioContext = useMemo(readEditionStudioContext, []);
   const accessiblePublishers = useMemo(
     () =>
       canManagePlatform(profile)
@@ -2013,7 +2924,7 @@ function AdminView({
   const fallbackLocation =
     findLocationByCity(fallbackPublisher?.city, fallbackEditionLocations) ??
     fallbackEditionLocations[0];
-  const [draftTitle, setDraftTitle] = useState("Today edition");
+  const [draftTitle, setDraftTitle] = useState("");
   const [draftDate, setDraftDate] = useState(() =>
     new Date().toISOString().slice(0, 10),
   );
@@ -2064,14 +2975,22 @@ function AdminView({
     "idle" | "uploading" | "success" | "error"
   >("idle");
   const [uploadMessage, setUploadMessage] = useState("");
+  const [pageAppendStatus, setPageAppendStatus] = useState<
+    "idle" | "uploading" | "success" | "error"
+  >("idle");
+  const pageAppendInputRef = useRef<HTMLInputElement>(null);
   const [workflowEditionId, setWorkflowEditionId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<"success" | "error">(
     "success",
   );
   const [workflowMessage, setWorkflowMessage] = useState("");
   const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0);
-  const [previewEditionId, setPreviewEditionId] = useState("");
-  const [articlePageId, setArticlePageId] = useState("");
+  const [previewEditionId, setPreviewEditionId] = useState(
+    restoredStudioContext?.previewEditionId ?? "",
+  );
+  const [articlePageId, setArticlePageId] = useState(
+    restoredStudioContext?.articlePageId ?? "",
+  );
   const [articleTitle, setArticleTitle] = useState("");
   const [articleSection, setArticleSection] = useState("शहर");
   const [articleSummary, setArticleSummary] = useState("");
@@ -2085,8 +3004,15 @@ function AdminView({
     "idle" | "saving" | "success" | "error"
   >("idle");
   const [articleCreateMessage, setArticleCreateMessage] = useState("");
-  const [selectedBlockId, setSelectedBlockId] = useState("");
+  const [selectedBlockId, setSelectedBlockId] = useState(
+    restoredStudioContext?.selectedBlockId ?? "",
+  );
   const [manualClipActive, setManualClipActive] = useState(false);
+  const [awaitingClipDraw, setAwaitingClipDraw] = useState(false);
+  const [clipExtractStatus, setClipExtractStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [draftClipPreviewUrl, setDraftClipPreviewUrl] = useState("");
   const [blockType, setBlockType] = useState<ArticleBlockType>("article");
   const [blockStatus, setBlockStatus] = useState<ArticleBlockStatus>("draft");
   const [blockLabel, setBlockLabel] = useState("Manual block");
@@ -2096,7 +3022,9 @@ function AdminView({
   const [blockHeight, setBlockHeight] = useState(18);
   const [hideClips, setHideClips] = useState(false);
   const [clipZoom, setClipZoom] = useState(1);
-  const [sidebarTab, setSidebarTab] = useState<"pages" | "clips">("pages");
+  const [sidebarTab, setSidebarTab] = useState<"pages" | "clips">(
+    restoredStudioContext?.sidebarTab ?? "pages",
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sectionPanelOpen, setSectionPanelOpen] = useState(true);
   const [clipDrawMode, setClipDrawMode] = useState(true);
@@ -2174,19 +3102,20 @@ function AdminView({
   const selectedPageIndex =
     previewEdition?.pages.findIndex((page) => page.id === selectedArticlePage?.id) ?? -1;
   const totalPreviewPages = previewEdition?.pages.length ?? 0;
-  const showManualClipOverlay =
-    manualClipActive && blockMessage.startsWith("Manual block started");
-  const activeClipOverlay = selectedArticlePage && (selectedBlock || showManualClipOverlay)
-    ? {
-        id: selectedBlock?.id ?? "manual-draft",
-        label: blockLabel,
-        x: blockX,
-        y: blockY,
-        width: blockWidth,
-        height: blockHeight,
-        isDraft: !selectedBlock,
-      }
-    : null;
+  const hasDraftClipGeometry = blockWidth >= 2 && blockHeight >= 2;
+  const activeClipOverlay =
+    selectedArticlePage &&
+    (selectedBlock || (manualClipActive && hasDraftClipGeometry && !awaitingClipDraw))
+      ? {
+          id: selectedBlock?.id ?? "manual-draft",
+          label: blockLabel,
+          x: blockX,
+          y: blockY,
+          width: blockWidth,
+          height: blockHeight,
+          isDraft: !selectedBlock,
+        }
+      : null;
   const currentWorkflowEdition = previewEdition ?? reviewQueue[0] ?? null;
   const currentWorkflowBlocks = currentWorkflowEdition
     ? workspaceBlocks.filter((block) => block.editionId === currentWorkflowEdition.id)
@@ -2205,6 +3134,21 @@ function AdminView({
   const currentWorkflowPosts = currentWorkflowEdition
     ? publisherArticles.filter((article) => article.editionId === currentWorkflowEdition.id)
     : [];
+  const selectedClipSavedPost = useMemo(() => {
+    if (!selectedBlock) {
+      return null;
+    }
+
+    if (selectedBlock.articlePostId) {
+      return (
+        publisherArticles.find((article) => article.id === selectedBlock.articlePostId) ?? null
+      );
+    }
+
+    return (
+      publisherArticles.find((article) => article.sourceBlockId === selectedBlock.id) ?? null
+    );
+  }, [publisherArticles, selectedBlock]);
   const currentWorkflowHasPages = Boolean(
     currentWorkflowEdition?.pages.some((page) => page.imageUrl),
   );
@@ -2239,6 +3183,19 @@ function AdminView({
     workspaceBlocks,
     workspaceComments,
   );
+
+  useEffect(() => {
+    if (!previewEditionId || !articlePageId) {
+      return;
+    }
+
+    writeEditionStudioContext({
+      previewEditionId,
+      articlePageId,
+      selectedBlockId,
+      sidebarTab,
+    });
+  }, [articlePageId, previewEditionId, selectedBlockId, sidebarTab]);
 
   useEffect(() => {
     let active = true;
@@ -2348,6 +3305,49 @@ function AdminView({
     };
   }, [workspacePublisherIds]);
 
+  function publisherPostStudioContext(article: ArticlePost) {
+    return previewEditionId === article.editionId
+      ? {
+          previewEditionId,
+          articlePageId: articlePageId || article.pageId,
+          selectedBlockId: selectedBlockId || article.sourceBlockId || "",
+          sidebarTab: "clips" as const,
+        }
+      : articleStudioContext(article);
+  }
+
+  function openPublisherPostActivity(article: ArticlePost) {
+    writeEditionStudioContext(publisherPostStudioContext(article));
+    navigate(`${EDITION_STUDIO_PATH}/posts/${article.id}`);
+  }
+
+  function hydrateSectionFormFromArticle(article: ArticlePost) {
+    setArticleTitle(article.title);
+    setArticleSection(article.section);
+    setArticleSummary(article.summary);
+    setArticleBody(article.body);
+    setArticleHotspotLabel(getHotspotLabelForArticle(previewEdition, article));
+    setArticleAccessRule(article.accessRule);
+    setArticleDiscussionRule(article.discussionRule);
+
+    if (article.blockGeometry) {
+      const geometry = normalizeBlockGeometry(article.blockGeometry);
+
+      setBlockX(geometry.x);
+      setBlockY(geometry.y);
+      setBlockWidth(geometry.width);
+      setBlockHeight(geometry.height);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedClipSavedPost || !selectedBlock || selectedBlock.id !== selectedBlockId) {
+      return;
+    }
+
+    hydrateSectionFormFromArticle(selectedClipSavedPost);
+  }, [selectedBlockId, selectedClipSavedPost?.id]);
+
   async function handleDraftUpload() {
     if (!authUser || !sourceFile) {
       setUploadStatus("error");
@@ -2362,6 +3362,7 @@ function AdminView({
       const nextDraft = await createEditionDraft(
         {
           publisherId: selectedDraftPublisherId,
+          publisherName: selectedDraftPublisher?.name ?? selectedDraftPublisherId,
           title: draftTitle,
           date: draftDate,
           state: draftState,
@@ -2394,6 +3395,71 @@ function AdminView({
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     setSourceFile(event.target.files?.[0] ?? null);
+  }
+
+  async function handleAppendPagesChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.target.files?.[0] ?? null;
+
+    if (pageAppendInputRef.current) {
+      pageAppendInputRef.current.value = "";
+    }
+
+    if (!nextFile || !previewEdition || !authUser) {
+      setPageAppendStatus("error");
+      setUploadMessage("Choose a PDF or image to add pages to this edition.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, previewEdition.publisherId)) {
+      setPageAppendStatus("error");
+      setUploadMessage("This account cannot add pages for that publisher.");
+      return;
+    }
+
+    setPageAppendStatus("uploading");
+    setUploadMessage("");
+
+    try {
+      const updatedEdition = await appendEditionPagesFromFile(
+        previewEdition,
+        nextFile,
+        authUser,
+      );
+      const addedCount = updatedEdition.pages.length - previewEdition.pages.length;
+      const lastPage = updatedEdition.pages[updatedEdition.pages.length - 1];
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, updatedEdition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === updatedEdition.id ? updatedEdition : draft,
+        ),
+      );
+      setPreviewEditionId(updatedEdition.id);
+
+      if (lastPage) {
+        setArticlePageId(lastPage.id);
+        resetArticleBlockForm(lastPage.section);
+      }
+
+      setPageAppendStatus("success");
+      setUploadMessage(
+        addedCount === 1
+          ? `Page ${lastPage?.pageNumber ?? ""} added to this edition.`
+          : `${addedCount} pages added to this edition.`,
+      );
+      setWorkspaceRefreshKey((currentKey) => currentKey + 1);
+    } catch (error) {
+      setPageAppendStatus("error");
+      setUploadMessage(
+        error instanceof Error ? error.message : "Unable to add pages to this edition.",
+      );
+    } finally {
+      setPageAppendStatus((currentStatus) =>
+        currentStatus === "uploading" ? "idle" : currentStatus,
+      );
+    }
   }
 
   function setLocationDraftFromPublisher(
@@ -2499,6 +3565,63 @@ function AdminView({
       setWorkflowStatus("error");
       setWorkflowMessage(
         error instanceof Error ? error.message : "Unable to update edition status.",
+      );
+    } finally {
+      setWorkflowEditionId("");
+    }
+  }
+
+  async function handleDeleteEdition(edition: Edition) {
+    if (!authUser) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("Sign in before deleting an edition.");
+      return;
+    }
+
+    if (!canManagePublisher(profile, userAccess, edition.publisherId)) {
+      setWorkflowStatus("error");
+      setWorkflowMessage("This account cannot manage that publisher.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete "${edition.title}"? This removes the edition, uploaded files, clips, and posts.`,
+      )
+    ) {
+      return;
+    }
+
+    setWorkflowEditionId(edition.id);
+    setWorkflowStatus("success");
+    setWorkflowMessage("");
+
+    try {
+      await deletePublisherEdition(edition);
+
+      setWorkspaceEditions((currentEditions) =>
+        currentEditions.filter((item) => item.id !== edition.id),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.filter((item) => item.id !== edition.id),
+      );
+      setWorkspaceBlocks((currentBlocks) =>
+        currentBlocks.filter((block) => block.editionId !== edition.id),
+      );
+
+      if (previewEditionId === edition.id) {
+        setPreviewEditionId("");
+        setArticlePageId("");
+        resetArticleBlockForm(articleSection);
+      }
+
+      setWorkflowStatus("success");
+      setWorkflowMessage("Edition deleted.");
+      setWorkspaceRefreshKey((currentKey) => currentKey + 1);
+    } catch (error) {
+      setWorkflowStatus("error");
+      setWorkflowMessage(
+        error instanceof Error ? error.message : "Unable to delete this edition.",
       );
     } finally {
       setWorkflowEditionId("");
@@ -2616,9 +3739,41 @@ function AdminView({
     selectPreviewPage(previewEdition.pages[boundedIndex].id);
   }
 
+  function clearDraftClipPreview() {
+    setDraftClipPreviewUrl((currentUrl) => {
+      if (currentUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(currentUrl);
+      }
+
+      return "";
+    });
+  }
+
+  function applyExtractedClipDetails(
+    details: Awaited<ReturnType<typeof extractClipRegionDetails>>,
+    pageSection: string,
+    clipLabel: string,
+  ) {
+    setBlockType(details.type);
+    setBlockLabel(clipLabel);
+    setArticleTitle(details.title);
+    setArticleSection(details.section || pageSection);
+    setArticleHotspotLabel(details.label);
+    setArticleSummary(details.summary);
+    setArticleBody(details.body);
+
+    if (details.previewDataUrl) {
+      clearDraftClipPreview();
+      setDraftClipPreviewUrl(details.previewDataUrl);
+    }
+  }
+
   function resetArticleBlockForm(section = "मुख पृष्ठ") {
     setSelectedBlockId("");
     setManualClipActive(false);
+    setAwaitingClipDraw(false);
+    setClipExtractStatus("idle");
+    clearDraftClipPreview();
     setBlockType("article");
     setBlockStatus("draft");
     setBlockLabel("Manual block");
@@ -2637,48 +3792,202 @@ function AdminView({
     setArticleCreateMessage("");
   }
 
-  function handleClipSurfaceClick(event: MouseEvent<HTMLDivElement>) {
+  function resetCurrentSectionForm() {
+    resetArticleBlockForm(selectedArticlePage?.section ?? articleSection);
+  }
+
+  function articleBlockDraftDefaults() {
+    const fallbackSection =
+      articleSection.trim() ||
+      selectedBlock?.section.trim() ||
+      selectedArticlePage?.section ||
+      "General";
+    const fallbackTitle =
+      articleTitle.trim() ||
+      selectedBlock?.title.trim() ||
+      selectedBlock?.label.trim() ||
+      selectedArticlePage?.headline ||
+      `Page ${selectedArticlePage?.pageNumber ?? 1} story`;
+    const fallbackLabel =
+      blockLabel.trim() ||
+      articleHotspotLabel.trim() ||
+      selectedBlock?.label.trim() ||
+      fallbackTitle;
+
+    return {
+      title: fallbackTitle,
+      section: fallbackSection,
+      label: fallbackLabel,
+      hotspotLabel: articleHotspotLabel.trim() || fallbackLabel,
+      summary:
+        articleSummary.trim() ||
+        selectedBlock?.summary.trim() ||
+        selectedArticlePage?.subhead ||
+        "Publisher-created story block. Review and enrich this summary when ready.",
+      body:
+        articleBody.trim() ||
+        selectedBlock?.body.trim() ||
+        "Publisher will add cleaned story text here after OCR review.",
+      authorName: articleAuthorName.trim() || "Publisher Desk",
+    };
+  }
+
+  function handleStartNewClip() {
+    if (!selectedArticlePage) {
+      return;
+    }
+
+    clearDraftClipPreview();
+    setClipExtractStatus("idle");
+    setSidebarTab("clips");
+    setClipDrawMode(true);
+    setSectionPanelOpen(true);
+    setSelectedBlockId("");
+    setManualClipActive(false);
+    setAwaitingClipDraw(true);
+    setBlockType("article");
+    setBlockStatus("draft");
+    const nextClipLabel = formatPageClipLabel(selectedPageBlocks);
+    setBlockLabel(nextClipLabel);
+    setArticleTitle("");
+    setArticleSummary("");
+    setArticleBody("");
+    setArticleHotspotLabel(nextClipLabel);
+    setBlockX(0);
+    setBlockY(0);
+    setBlockWidth(0);
+    setBlockHeight(0);
+    setBlockSaveStatus("idle");
+    setBlockMessage("Drag on the page to draw the clip region.");
+    setArticleCreateStatus("idle");
+    setArticleCreateMessage("");
+  }
+
+  async function handleClipDrawComplete(geometry: ClipRegionGeometry) {
+    const normalized = normalizeBlockGeometry(geometry);
+
+    if (!previewEdition || !selectedArticlePage) {
+      return;
+    }
+
+    setAwaitingClipDraw(false);
+    setManualClipActive(true);
+    setSectionPanelOpen(true);
+    setSidebarTab("clips");
+    setSelectedBlockId("");
+    setBlockStatus("draft");
+    setBlockX(normalized.x);
+    setBlockY(normalized.y);
+    setBlockWidth(normalized.width);
+    setBlockHeight(normalized.height);
+    setBlockSaveStatus("idle");
+    setArticleCreateStatus("idle");
+    setArticleCreateMessage("");
+    setClipExtractStatus("loading");
+    setBlockMessage("Extracting title, section, and label from the clip...");
+
+    const pageSection = selectedArticlePage.section || articleSection;
+    const clipLabel = formatPageClipLabel(selectedPageBlocks);
+
+    try {
+      const localPreview = await createDraftClipPreviewUrl(
+        previewEdition,
+        selectedArticlePage,
+        normalized,
+      );
+
+      if (localPreview) {
+        clearDraftClipPreview();
+        setDraftClipPreviewUrl(localPreview);
+      }
+
+      const extracted = await extractClipRegionDetails({
+        publisherId: previewEdition.publisherId,
+        editionId: previewEdition.id,
+        pageId: selectedArticlePage.id,
+        pageNumber: selectedArticlePage.pageNumber,
+        pageSection,
+        ...normalized,
+      });
+
+      applyExtractedClipDetails(extracted, pageSection, clipLabel);
+      setClipExtractStatus("success");
+      setBlockMessage("Clip details extracted. Review, save clip, then create post.");
+    } catch (error) {
+      setClipExtractStatus("error");
+      setBlockType("article");
+      setBlockLabel(clipLabel);
+      setArticleTitle(selectedArticlePage.headline || "New story");
+      setArticleSection(pageSection);
+      setArticleHotspotLabel(clipLabel);
+      setArticleSummary(selectedArticlePage.subhead || "");
+      setArticleBody("");
+      setBlockMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not extract clip details. Enter them manually.",
+      );
+    }
+  }
+
+  async function handleDeleteBlock(block: ArticleBlock) {
+    if (!authUser || !previewEdition) {
+      setBlockSaveStatus("error");
+      setBlockMessage("Open an edition before deleting a clip.");
+      return;
+    }
+
     if (
-      !clipDrawMode ||
-      !previewEdition ||
-      !selectedArticlePage ||
-      (event.target as HTMLElement).closest(".clip-block")
+      !window.confirm(
+        block.articlePostId
+          ? "Delete this clip from the page? The saved post will stay in the edition."
+          : "Delete this clip from the page?",
+      )
     ) {
       return;
     }
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 100;
-    const y = ((event.clientY - rect.top) / rect.height) * 100;
+    setBlockSaveStatus("saving");
+    setBlockMessage("");
 
-    setSelectedBlockId("");
-    setManualClipActive(true);
-    setBlockType("article");
-    setBlockStatus("draft");
-    setBlockLabel("Manual block");
-    setArticleTitle("");
-    setArticleSummary("");
-    setArticleBody("");
-    setArticleHotspotLabel("Manual block");
-    const geometry = normalizeBlockGeometry({
-      x: Math.min(84, Math.max(0, Math.round(x * 10) / 10)),
-      y: Math.min(84, Math.max(0, Math.round(y * 10) / 10)),
-      width: 28,
-      height: 16,
-    });
+    try {
+      const result = await deleteArticleBlock(block, previewEdition);
 
-    setBlockX(geometry.x);
-    setBlockY(geometry.y);
-    setBlockWidth(geometry.width);
-    setBlockHeight(geometry.height);
-    setBlockMessage("Manual block started. Adjust details, then save draft.");
+      setWorkspaceBlocks((currentBlocks) =>
+        currentBlocks.filter((currentBlock) => currentBlock.id !== block.id),
+      );
+
+      if (result.edition) {
+        setWorkspaceEditions((currentEditions) =>
+          upsertEdition(currentEditions, result.edition!),
+        );
+        setCreatedDrafts((currentDrafts) =>
+          currentDrafts.map((draft) =>
+            draft.id === result.edition!.id ? result.edition! : draft,
+          ),
+        );
+      }
+
+      if (selectedBlockId === block.id) {
+        resetArticleBlockForm(selectedArticlePage?.section ?? articleSection);
+      }
+
+      setBlockSaveStatus("success");
+      setBlockMessage("Clip deleted.");
+    } catch (error) {
+      setBlockSaveStatus("error");
+      setBlockMessage(error instanceof Error ? error.message : "Unable to delete clip.");
+    }
   }
 
   function handleSelectBlock(block: ArticleBlock) {
     const geometry = normalizeBlockGeometry(block);
 
+    clearDraftClipPreview();
+    setClipExtractStatus("idle");
     setSelectedBlockId(block.id);
     setManualClipActive(false);
+    setAwaitingClipDraw(false);
     setBlockType(block.type);
     setBlockStatus(block.status === "suggested" ? "accepted" : block.status);
     setBlockLabel(block.label);
@@ -2693,7 +4002,90 @@ function AdminView({
     setBlockHeight(geometry.height);
     setArticleCreateStatus("idle");
     setArticleCreateMessage("");
+    if (previewEdition) {
+      const linkedPost =
+        publisherArticles.find((article) => article.id === block.articlePostId) ??
+        publisherArticles.find((article) => article.sourceBlockId === block.id);
+
+      if (linkedPost) {
+        hydrateSectionFormFromArticle(linkedPost);
+      }
+    }
+
     setBlockMessage("");
+  }
+
+  async function handleRefreshClipImage() {
+    if (!authUser || !previewEdition || !selectedArticlePage || !selectedClipSavedPost || !selectedBlock) {
+      setArticleCreateStatus("error");
+      setArticleCreateMessage("Save the clip and create a post before updating the clip image.");
+      return;
+    }
+
+    setArticleCreateStatus("saving");
+    setArticleCreateMessage("");
+
+    try {
+      const defaults = articleBlockDraftDefaults();
+      const geometry = normalizeBlockGeometry({
+        x: blockX,
+        y: blockY,
+        width: blockWidth,
+        height: blockHeight,
+      });
+      const result = await updatePublisherArticlePost(
+        {
+          articleId: selectedClipSavedPost.id,
+          editionId: previewEdition.id,
+          pageId: selectedArticlePage.id,
+          blockId: selectedBlock.id,
+          type: blockType,
+          title: defaults.title,
+          section: defaults.section,
+          summary: defaults.summary,
+          body: defaults.body,
+          authorName: defaults.authorName,
+          accessRule: articleAccessRule,
+          discussionRule: articleDiscussionRule,
+          hotspotLabel: defaults.hotspotLabel,
+          regenerateClipImage: true,
+          ...geometry,
+        },
+        authUser,
+      );
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, result.edition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === result.edition.id ? result.edition : draft,
+        ),
+      );
+      setCreatedArticles((currentArticles) =>
+        currentArticles.map((article) =>
+          article.id === result.article.id ? result.article : article,
+        ),
+      );
+
+      if (result.block) {
+        setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, result.block!));
+        setSelectedBlockId(result.block.id);
+      }
+
+      clearDraftClipPreview();
+      if (result.article.clippedImageUrl) {
+        setDraftClipPreviewUrl(result.article.clippedImageUrl);
+      }
+
+      setArticleCreateStatus("success");
+      setArticleCreateMessage("Clip image refreshed from the current rectangle.");
+    } catch (error) {
+      setArticleCreateStatus("error");
+      setArticleCreateMessage(
+        error instanceof Error ? error.message : "Unable to refresh the clip image.",
+      );
+    }
   }
 
   function updateBlockGeometry(nextGeometry: Partial<BlockGeometry>) {
@@ -2722,6 +4114,21 @@ function AdminView({
     setBlockMessage("");
 
     try {
+      const defaults = articleBlockDraftDefaults();
+      const savedClipLabel =
+        selectedBlockId && !isGenericClipLabel(defaults.label)
+          ? defaults.label
+          : formatPageClipLabel(
+              selectedPageBlocks.filter((block) => block.id !== selectedBlockId),
+            );
+
+      if (savedClipLabel !== blockLabel) {
+        setBlockLabel(savedClipLabel);
+        if (isGenericClipLabel(articleHotspotLabel)) {
+          setArticleHotspotLabel(savedClipLabel);
+        }
+      }
+
       const nextBlock = await saveArticleBlockDraft(
         {
           blockId: selectedBlockId || undefined,
@@ -2732,11 +4139,11 @@ function AdminView({
           type: blockType,
           status: blockStatus,
           source: selectedBlock?.source ?? "manual",
-          label: blockLabel,
-          title: articleTitle || blockLabel,
-          section: articleSection,
-          summary: articleSummary || "Publisher draft block. Review before publishing.",
-          body: articleBody || "Publisher will add cleaned article text here.",
+          label: savedClipLabel,
+          title: defaults.title,
+          section: defaults.section,
+          summary: defaults.summary,
+          body: defaults.body,
           x: blockX,
           y: blockY,
           width: blockWidth,
@@ -2750,7 +4157,7 @@ function AdminView({
       setSelectedBlockId(nextBlock.id);
       setManualClipActive(false);
       setBlockSaveStatus("success");
-      setBlockMessage("Block draft saved.");
+      setBlockMessage(`${savedClipLabel} saved.`);
     } catch (error) {
       setBlockSaveStatus("error");
       setBlockMessage(error instanceof Error ? error.message : "Unable to save block.");
@@ -2858,26 +4265,82 @@ function AdminView({
     setArticleCreateMessage("");
 
     try {
+      const defaults = articleBlockDraftDefaults();
       const geometry = normalizeBlockGeometry({
         x: blockX,
         y: blockY,
         width: blockWidth,
         height: blockHeight,
       });
+
+      if (selectedClipSavedPost && selectedBlock) {
+        const updateResult = await updatePublisherArticlePost(
+          {
+            articleId: selectedClipSavedPost.id,
+            editionId: previewEdition.id,
+            pageId: selectedArticlePage.id,
+            blockId: selectedBlock.id,
+            type: blockType,
+            title: defaults.title,
+            section: defaults.section,
+            summary: defaults.summary,
+            body: defaults.body,
+            authorName: defaults.authorName,
+            accessRule: articleAccessRule,
+            discussionRule: articleDiscussionRule,
+            hotspotLabel: defaults.hotspotLabel,
+            regenerateClipImage: true,
+            ...geometry,
+          },
+          authUser,
+        );
+
+        setWorkspaceEditions((currentEditions) =>
+          upsertEdition(currentEditions, updateResult.edition),
+        );
+        setCreatedDrafts((currentDrafts) =>
+          currentDrafts.map((draft) =>
+            draft.id === updateResult.edition.id ? updateResult.edition : draft,
+          ),
+        );
+        setCreatedArticles((currentArticles) =>
+          currentArticles.map((article) =>
+            article.id === updateResult.article.id ? updateResult.article : article,
+          ),
+        );
+
+        if (updateResult.block) {
+          setWorkspaceBlocks((currentBlocks) =>
+            upsertBlock(currentBlocks, updateResult.block!),
+          );
+        }
+
+        hydrateSectionFormFromArticle(updateResult.article);
+        clearDraftClipPreview();
+
+        if (updateResult.article.clippedImageUrl) {
+          setDraftClipPreviewUrl(updateResult.article.clippedImageUrl);
+        }
+
+        setArticleCreateStatus("success");
+        setArticleCreateMessage("Post updated with the latest clip details.");
+        return;
+      }
+
       const result = await createArticleBlockFromPreviewPage(
         previewEdition,
         {
           pageId: selectedArticlePage.id,
           blockId: selectedBlock?.id,
           ...geometry,
-          title: articleTitle,
-          section: articleSection,
-          summary: articleSummary,
-          body: articleBody,
-          authorName: articleAuthorName,
+          title: defaults.title,
+          section: defaults.section,
+          summary: defaults.summary,
+          body: defaults.body,
+          authorName: defaults.authorName,
           accessRule: articleAccessRule,
           discussionRule: articleDiscussionRule,
-          hotspotLabel: articleHotspotLabel,
+          hotspotLabel: defaults.hotspotLabel,
         },
         authUser,
       );
@@ -2891,23 +4354,37 @@ function AdminView({
         ),
       );
       setCreatedArticles((currentArticles) => [result.article, ...currentArticles]);
-      setArticleTitle("");
-      setArticleSummary("");
-      setArticleBody("");
-      setArticleHotspotLabel("Open story");
-      if (selectedBlock) {
-        setWorkspaceBlocks((currentBlocks) =>
-          upsertBlock(currentBlocks, {
+
+      const nextBlock = selectedBlock
+        ? {
             ...selectedBlock,
             articlePostId: result.article.id,
             clippedImageUrl: result.article.clippedImageUrl,
             clippedImagePath: result.article.clippedImagePath,
-            status: "published",
-          }),
-        );
+            status: "published" as const,
+            title: result.article.title,
+            section: result.article.section,
+            summary: result.article.summary,
+            body: result.article.body,
+          }
+        : null;
+
+      if (nextBlock) {
+        setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, nextBlock));
+        setSelectedBlockId(nextBlock.id);
       }
+
+      hydrateSectionFormFromArticle(result.article);
+      clearDraftClipPreview();
+
+      if (result.article.clippedImageUrl) {
+        setDraftClipPreviewUrl(result.article.clippedImageUrl);
+      }
+
       setArticleCreateStatus("success");
-      setArticleCreateMessage("Article post created with a saved clipping image.");
+      setArticleCreateMessage(
+        "Post published. Use Preview as reader or View & edit post below.",
+      );
     } catch (error) {
       setArticleCreateStatus("error");
       setArticleCreateMessage(
@@ -3229,6 +4706,19 @@ function AdminView({
                     </select>
                   </label>
                   <label className="studio-field">
+                    <span>Language</span>
+                    <select
+                      value={selectedDraftLanguage}
+                      onChange={(event) => setDraftLanguage(event.target.value)}
+                    >
+                      {editionLanguages.map((languageOption) => (
+                        <option key={languageOption.id} value={languageOption.name}>
+                          {languageOption.name} ({languageOption.nativeName})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="studio-field">
                     <span>Edition date</span>
                     <input
                       type="date"
@@ -3237,11 +4727,11 @@ function AdminView({
                     />
                   </label>
                   <label className="studio-field">
-                    <span>Title</span>
+                    <span>Edition label</span>
                     <input
                       value={draftTitle}
                       onChange={(event) => setDraftTitle(event.target.value)}
-                      placeholder="Today edition"
+                      placeholder="Optional headline"
                     />
                   </label>
                   <label className="studio-field studio-field-upload">
@@ -3264,22 +4754,6 @@ function AdminView({
                   <details className="studio-advanced-fields">
                     <summary>Edition defaults</summary>
                     <div className="studio-advanced-grid">
-                      <label className="studio-field">
-                        <span>Language</span>
-                        <select
-                          value={selectedDraftLanguage}
-                          onChange={(event) => setDraftLanguage(event.target.value)}
-                        >
-                          {editionLanguages.map((languageOption) => (
-                            <option
-                              key={languageOption.id}
-                              value={languageOption.name}
-                            >
-                              {languageOption.name} ({languageOption.nativeName})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                       <label className="studio-field">
                         <span>Access</span>
                         <select
@@ -3326,7 +4800,7 @@ function AdminView({
                   <option value="">Select edition...</option>
                   {reviewQueue.map((edition) => (
                     <option key={edition.id} value={edition.id}>
-                      {edition.title} • {edition.date} • {formatRole(edition.status)}
+                      {edition.title} • {formatRole(edition.status)}
                     </option>
                   ))}
                 </select>
@@ -3378,6 +4852,15 @@ function AdminView({
                           : "Run processing"}
                       </button>
                     )}
+                  <button
+                    type="button"
+                    className="studio-icon-btn danger-action"
+                    disabled={workflowEditionId === previewEdition.id}
+                    onClick={() => void handleDeleteEdition(previewEdition)}
+                  >
+                    <Trash2 size={16} />
+                    Delete edition
+                  </button>
                 </>
               )}
             </div>
@@ -3485,7 +4968,7 @@ function AdminView({
                 </div>
 
                 {!sidebarCollapsed && sidebarTab === "pages" && (
-                  <>
+                  <div className="clip-rail-pages">
                     <div className="page-thumb-list">
                       {previewEdition.pages.map((page) => (
                         <button
@@ -3500,44 +4983,77 @@ function AdminView({
                               alt={`Page ${page.pageNumber}`}
                             />
                           ) : (
-                            <Newspaper size={22} />
+                            <div className="page-thumb-placeholder">
+                              <Newspaper size={22} />
+                            </div>
                           )}
                           <span>Page {page.pageNumber}</span>
                           <small>{page.section}</small>
                         </button>
                       ))}
+                      <label
+                        className={`page-add-card ${pageAppendStatus === "uploading" ? "loading" : ""}`}
+                      >
+                        <input
+                          ref={pageAppendInputRef}
+                          type="file"
+                          accept="application/pdf,image/png,image/jpeg,image/webp"
+                          disabled={pageAppendStatus === "uploading"}
+                          onChange={(event) => void handleAppendPagesChange(event)}
+                        />
+                        <span className="page-add-card-icon" aria-hidden="true">
+                          <Plus size={22} />
+                        </span>
+                        <strong>
+                          {pageAppendStatus === "uploading" ? "Adding page..." : "Add page"}
+                        </strong>
+                        <span>PDF or image</span>
+                      </label>
                     </div>
-                    <label className="page-add-upload">
-                      <FileUp size={14} />
-                      <span>Add pages (PDF or image)</span>
-                      <input
-                        type="file"
-                        accept="application/pdf,image/png,image/jpeg,image/webp"
-                        onChange={handleFileChange}
-                      />
-                    </label>
-                  </>
+                  </div>
                 )}
 
                 {!sidebarCollapsed && sidebarTab === "clips" && (
-                  <div className="clip-list">
-                    {selectedPageBlocks.length === 0 && (
-                      <p className="empty-state">Click Clip, then draw a rectangle on the page.</p>
+                  <div className="clip-rail-body">
+                    <div className="clip-list">
+                    <button
+                      type="button"
+                      className={`clip-new-card ${awaitingClipDraw ? "active" : ""}`}
+                      onClick={handleStartNewClip}
+                    >
+                      <Plus size={16} />
+                      <strong>New clip</strong>
+                      <span>Draw a region on the page</span>
+                    </button>
+                    {selectedPageBlocks.length === 0 && !awaitingClipDraw && (
+                      <p className="empty-state">Add a clip, then drag on the page to set boundaries.</p>
                     )}
                     {selectedPageBlocks.map((block) => (
-                      <button
-                        type="button"
-                        className={block.id === selectedBlock?.id ? "active" : ""}
+                      <div
+                        className={`clip-list-row ${block.id === selectedBlock?.id ? "active" : ""}`}
                         key={block.id}
-                        onClick={() => handleSelectBlock(block)}
                       >
-                        <strong>{block.label}</strong>
-                        <span>
-                          {formatRole(block.type)} • {formatRole(block.status)}
-                        </span>
-                        {block.clippedImageUrl && <small>Post saved</small>}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectBlock(block)}
+                        >
+                          <strong>{block.label}</strong>
+                          <span>
+                            {formatRole(block.type)} • {formatRole(block.status)}
+                          </span>
+                          {block.clippedImageUrl && <small>Post saved</small>}
+                        </button>
+                        <button
+                          type="button"
+                          className="clip-delete-btn"
+                          aria-label={`Delete clip ${block.label}`}
+                          onClick={() => void handleDeleteBlock(block)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     ))}
+                    </div>
                   </div>
                 )}
               </aside>
@@ -3633,58 +5149,60 @@ function AdminView({
                 {selectedArticlePage && (
                   <div className="clip-stage-wrap">
                     <div
-                      className={`clip-stage ${clipDrawMode ? "draw-mode" : ""}`}
+                      className="clip-stage-zoom"
                       style={{ transform: `scale(${clipZoom})` }}
-                      onClick={handleClipSurfaceClick}
                     >
-                      {selectedArticlePage.imageUrl ? (
-                        <img
-                          src={selectedArticlePage.imageUrl}
-                          alt={`Page ${selectedArticlePage.pageNumber}`}
-                        />
-                      ) : (
-                        <div className="clip-placeholder-page">
-                          <strong>{selectedArticlePage.headline}</strong>
-                          <p>{selectedArticlePage.subhead}</p>
-                        </div>
-                      )}
-                      {!hideClips &&
-                        selectedPageBlocks
-                          .filter((block) => block.id !== selectedBlockId)
-                          .map((block) => (
-                            <button
-                              type="button"
-                              className="clip-block"
-                              key={block.id}
-                              style={{
-                                left: `${block.x}%`,
-                                top: `${block.y}%`,
-                                width: `${block.width}%`,
-                                height: `${block.height}%`,
-                              }}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleSelectBlock(block);
-                              }}
-                            >
-                              <span>{block.label}</span>
-                            </button>
-                          ))}
-                      {!hideClips && activeClipOverlay && (
-                        <button
-                          type="button"
-                          className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
-                          style={{
-                            left: `${activeClipOverlay.x}%`,
-                            top: `${activeClipOverlay.y}%`,
-                            width: `${activeClipOverlay.width}%`,
-                            height: `${activeClipOverlay.height}%`,
-                          }}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <span>{activeClipOverlay.label}</span>
-                        </button>
-                      )}
+                      <ClipRegionDrawer
+                        enabled={clipDrawMode && Boolean(selectedArticlePage.imageUrl)}
+                        onDrawComplete={(geometry) => void handleClipDrawComplete(geometry)}
+                      >
+                        {selectedArticlePage.imageUrl ? (
+                          <img
+                            src={selectedArticlePage.imageUrl}
+                            alt={`Page ${selectedArticlePage.pageNumber}`}
+                          />
+                        ) : (
+                          <div className="clip-placeholder-page">
+                            <strong>{selectedArticlePage.headline}</strong>
+                            <p>{selectedArticlePage.subhead}</p>
+                          </div>
+                        )}
+                        {!hideClips &&
+                          selectedPageBlocks
+                            .filter((block) => block.id !== selectedBlockId)
+                            .map((block) => (
+                              <button
+                                type="button"
+                                className="clip-block"
+                                key={block.id}
+                                style={{
+                                  left: `${block.x}%`,
+                                  top: `${block.y}%`,
+                                  width: `${block.width}%`,
+                                  height: `${block.height}%`,
+                                }}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleSelectBlock(block);
+                                }}
+                              >
+                                <span>{block.label}</span>
+                              </button>
+                            ))}
+                        {!hideClips && activeClipOverlay && (
+                          <div
+                            className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
+                            style={{
+                              left: `${activeClipOverlay.x}%`,
+                              top: `${activeClipOverlay.y}%`,
+                              width: `${activeClipOverlay.width}%`,
+                              height: `${activeClipOverlay.height}%`,
+                            }}
+                          >
+                            <span>{activeClipOverlay.label}</span>
+                          </div>
+                        )}
+                      </ClipRegionDrawer>
                     </div>
                   </div>
                 )}
@@ -3697,17 +5215,38 @@ function AdminView({
                     <span>Page {selectedArticlePage.pageNumber}</span>
                   </div>
                   <form className="article-block-form compact" onSubmit={handleArticleBlockSubmit}>
-                    {selectedBlock?.clippedImageUrl && (
+                    {(draftClipPreviewUrl ||
+                      selectedClipSavedPost?.clippedImageUrl ||
+                      selectedBlock?.clippedImageUrl) && (
                       <figure className="saved-clip-preview">
-                        <img src={selectedBlock.clippedImageUrl} alt={selectedBlock.title} />
-                        <figcaption>Saved clipping</figcaption>
+                        <img
+                          src={
+                            draftClipPreviewUrl ||
+                            selectedClipSavedPost?.clippedImageUrl ||
+                            selectedBlock?.clippedImageUrl
+                          }
+                          alt={articleTitle || blockLabel || "Selected clip"}
+                        />
+                        <figcaption>
+                          {clipExtractStatus === "loading"
+                            ? "Analyzing clip..."
+                            : selectedClipSavedPost
+                              ? "Published clip image"
+                              : draftClipPreviewUrl
+                                ? "Drawn clip preview"
+                                : "Saved clipping"}
+                        </figcaption>
                       </figure>
+                    )}
+                    {clipExtractStatus === "loading" && (
+                      <p className="clip-extract-status loading">Extracting clip details...</p>
                     )}
                     <div className="form-grid">
                       <label>
                         <span>Type</span>
                         <select
                           value={blockType}
+                          disabled={clipExtractStatus === "loading"}
                           onChange={(event) =>
                             setBlockType(event.target.value as ArticleBlockType)
                           }
@@ -3723,6 +5262,7 @@ function AdminView({
                         <span>Section</span>
                         <input
                           value={articleSection}
+                          disabled={clipExtractStatus === "loading"}
                           onChange={(event) => setArticleSection(event.target.value)}
                         />
                       </label>
@@ -3730,6 +5270,7 @@ function AdminView({
                         <span>Title</span>
                         <input
                           value={articleTitle}
+                          disabled={clipExtractStatus === "loading"}
                           onChange={(event) => setArticleTitle(event.target.value)}
                           placeholder="Headline"
                         />
@@ -3738,6 +5279,7 @@ function AdminView({
                         <span>Hotspot label</span>
                         <input
                           value={blockLabel}
+                          disabled={clipExtractStatus === "loading"}
                           onChange={(event) => {
                             setBlockLabel(event.target.value);
                             setArticleHotspotLabel(event.target.value);
@@ -3853,11 +5395,65 @@ function AdminView({
                       </label>
                     </details>
                     <div className="section-panel-actions">
-                      <button type="button" disabled={blockSaveStatus === "saving"} onClick={handleSaveBlockDraft}>
-                        {blockSaveStatus === "saving" ? "Saving..." : "Save section"}
+                      {selectedBlock && (
+                        <button
+                          type="button"
+                          className="danger-action"
+                          disabled={blockSaveStatus === "saving"}
+                          onClick={() => void handleDeleteBlock(selectedBlock)}
+                        >
+                          Delete clip
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={
+                          blockSaveStatus === "saving" ||
+                          clipExtractStatus === "loading" ||
+                          awaitingClipDraw ||
+                          !hasDraftClipGeometry
+                        }
+                        onClick={handleSaveBlockDraft}
+                      >
+                        {blockSaveStatus === "saving" ? "Saving..." : "Save clip"}
                       </button>
-                      <button type="submit" disabled={articleCreateStatus === "saving"}>
-                        {articleCreateStatus === "saving" ? "Creating..." : "Create post"}
+                      <button
+                        type="submit"
+                        disabled={
+                          articleCreateStatus === "saving" || clipExtractStatus === "loading"
+                        }
+                      >
+                        {articleCreateStatus === "saving"
+                          ? selectedClipSavedPost
+                            ? "Updating..."
+                            : "Publishing..."
+                          : selectedClipSavedPost
+                            ? "Update post"
+                            : "Create post"}
+                      </button>
+                      {selectedClipSavedPost && (
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          disabled={
+                            articleCreateStatus === "saving" || clipExtractStatus === "loading"
+                          }
+                          onClick={() => void handleRefreshClipImage()}
+                        >
+                          Refresh clip image
+                        </button>
+                      )}
+                      <p className="section-panel-help">
+                        <strong>Save clip</strong> stores the rectangle and editor fields on this
+                        page. <strong>Create post</strong> publishes the reader story, saves the
+                        cropped image, and adds a page hotspot.
+                      </p>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={resetCurrentSectionForm}
+                      >
+                        Reset form
                       </button>
                       {selectedBlock && selectedBlock.status !== "published" && (
                         <button
@@ -3882,30 +5478,52 @@ function AdminView({
                       </p>
                     )}
                   </form>
-                  {currentWorkflowPosts.length > 0 && (
-                    <div className="created-post-strip compact">
-                      <strong>Saved posts for this edition</strong>
-                      <div>
-                        {currentWorkflowPosts.map((article) => (
-                          <article key={article.id}>
-                            {article.clippedImageUrl && (
-                              <img src={article.clippedImageUrl} alt={article.title} />
-                            )}
-                            <span>{article.title}</span>
+                  {selectedBlock && !awaitingClipDraw && (
+                    <div className="created-post-strip compact selected-clip-post">
+                      <strong>Published post for this clip</strong>
+                      {selectedClipSavedPost ? (
+                        <>
+                          <article>
+                            <span>{selectedClipSavedPost.title}</span>
                             <small>
-                              Page {article.pageNumber} • {formatRole(article.status)}
+                              Page {selectedClipSavedPost.pageNumber} •{" "}
+                              {formatRole(selectedClipSavedPost.status)}
                             </small>
-                            <button
-                              type="button"
+                          </article>
+                          <div className="published-post-links">
+                            <a
+                              className="text-link-btn"
+                              href={`/article/${selectedClipSavedPost.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <ExternalLink size={15} />
+                              Preview as reader
+                            </a>
+                            <Link
+                              className="text-link-btn"
+                              to={`${EDITION_STUDIO_PATH}/posts/${selectedClipSavedPost.id}`}
                               onClick={() =>
-                                navigate(`${EDITION_STUDIO_PATH}/posts/${article.id}`)
+                                writeEditionStudioContext(
+                                  publisherPostStudioContext(selectedClipSavedPost),
+                                )
                               }
                             >
-                              View activity
-                            </button>
-                          </article>
-                        ))}
-                      </div>
+                              View &amp; edit post
+                            </Link>
+                          </div>
+                          <p className="clip-post-empty">
+                            Edit fields above, then use Update post. Change the rectangle or
+                            choose Refresh clip image to regenerate the crop.
+                          </p>
+                        </>
+                      ) : (
+                        <p className="clip-post-empty">
+                          {selectedBlock.clippedImageUrl
+                            ? "Clip image is saved. Use Create post to publish this story."
+                            : "No post for this clip yet. Save clip, then create post."}
+                        </p>
+                      )}
                     </div>
                   )}
                 </aside>
@@ -4098,7 +5716,7 @@ function AdminView({
                 </small>
                 <button
                   type="button"
-                  onClick={() => navigate(`${EDITION_STUDIO_PATH}/posts/${article.id}`)}
+                  onClick={() => openPublisherPostActivity(article)}
                 >
                   Open
                 </button>
@@ -4221,10 +5839,14 @@ interface StatProps {
 
 function Stat({ icon, label, value }: StatProps) {
   return (
-    <article>
-      {icon}
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <article className="stat-card">
+      <div className="stat-card-copy">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <div className="stat-card-icon" aria-hidden="true">
+        {icon}
+      </div>
     </article>
   );
 }

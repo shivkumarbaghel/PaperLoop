@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { applicationDefault, cert, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, type WriteBatch } from "firebase-admin/firestore";
 import {
+  articleBlocks,
   articles,
   campaigns,
   editions,
@@ -36,6 +37,36 @@ const legacyPublisherIds = [
   "live-hindustan",
   "navodaya-times",
 ];
+const seededReaderPassword = process.env.PAPERLOOP_TEST_PASSWORD ?? "abc123";
+const seededReaderAccounts = [
+  {
+    loginId: "reader-priya",
+    email: "reader-priya@paperloop.test",
+    name: "Priya Reader",
+  },
+  {
+    loginId: "reader-aman",
+    email: "reader-aman@paperloop.test",
+    name: "Aman Delhi",
+  },
+  {
+    loginId: "reader-neha",
+    email: "reader-neha@paperloop.test",
+    name: "Neha Subscriber",
+  },
+  {
+    loginId: "reader-ravi",
+    email: "reader-ravi@paperloop.test",
+    name: "Ravi Sharma",
+  },
+];
+const seededCommentBodies = [
+  "Is story par local follow-up useful rahega.",
+  "Please add source page link and latest update time.",
+  "Good coverage. Area-wise details bhi milne chahiye.",
+  "Readers ke questions ke liye publisher reply option helpful hoga.",
+];
+const seededEngagementTypes = ["like", "save", "share", "comment"] as const;
 
 function loadLocalEnv() {
   const envPath = resolve(".env");
@@ -184,6 +215,273 @@ async function seedAccessFixtures() {
   }
 }
 
+async function seedReaderActivityFixtures() {
+  const readerUsers = await Promise.all(
+    seededReaderAccounts.map(async (account) => {
+      const user = await upsertReaderAuthUser(account);
+
+      await auth.setCustomUserClaims(user.uid, {
+        ...user.customClaims,
+        role: "reader",
+        publisherIds: [],
+      });
+
+      await db.collection("users").doc(user.uid).set(
+        {
+          id: user.uid,
+          loginId: account.loginId,
+          name: account.name,
+          email: account.email,
+          avatarUrl: null,
+          provider: "password",
+          role: "reader",
+          status: "active",
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      await db.collection("testAccounts").doc(account.loginId).set(
+        {
+          id: account.loginId,
+          loginId: account.loginId,
+          email: account.email,
+          password: seededReaderPassword,
+          role: "reader",
+          firebaseRole: "reader",
+          publisherId: null,
+          userId: user.uid,
+          status: "active",
+          testingOnly: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      return { ...account, uid: user.uid };
+    }),
+  );
+  const articleSnapshot = await db.collection("articlePosts").get();
+  const seededArticles = articleSnapshot.docs
+    .map((articleDoc) => ({
+      id: articleDoc.id,
+      ...articleDoc.data(),
+    }))
+    .filter(isSeedableArticle);
+  const writes: Array<(batch: FirebaseFirestore.WriteBatch) => void> = [];
+
+  seededArticles.forEach((article, articleIndex) => {
+    const linkFields = {
+      publisherId: article.publisherId,
+      editionId: article.editionId,
+      pageId: article.pageId,
+      articlePostId: article.id,
+    };
+    const articleCommentCount = Math.min(3, readerUsers.length);
+    const likeCount = readerUsers.length;
+    const saveCount = Math.ceil(readerUsers.length / 2);
+    const shareCount = Math.floor(readerUsers.length / 2);
+
+    readerUsers.slice(0, articleCommentCount).forEach((reader, readerIndex) => {
+      const id = `${article.id}-seed-comment-${reader.loginId}`;
+
+      writes.push((batch) =>
+        batch.set(
+          db.collection("comments").doc(id),
+          {
+            id,
+            ...linkFields,
+            userId: reader.uid,
+            userName: reader.name,
+            body: seededCommentBodies[(articleIndex + readerIndex) % seededCommentBodies.length],
+            sentiment: readerIndex === 0 ? "concern" : "neutral",
+            status: "published",
+            createdAt: seedActivityDate(articleIndex, readerIndex),
+            seededAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        ),
+      );
+    });
+
+    readerUsers.forEach((reader, readerIndex) => {
+      const eventTypes = seededEngagementTypes.filter((type) => {
+        if (type === "save") {
+          return readerIndex % 2 === 0;
+        }
+
+        if (type === "share") {
+          return readerIndex % 2 === 1;
+        }
+
+        if (type === "comment") {
+          return readerIndex < articleCommentCount;
+        }
+
+        return true;
+      });
+
+      eventTypes.forEach((type, typeIndex) => {
+        const id = `${article.id}-seed-${type}-${reader.loginId}`;
+
+        writes.push((batch) =>
+          batch.set(
+            db.collection("engagements").doc(id),
+            {
+              id,
+              ...linkFields,
+              userId: reader.uid,
+              type,
+              status: "active",
+              metadata: { seed: true },
+              createdAt: seedActivityDate(articleIndex, readerIndex + typeIndex + 4),
+              seededAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          ),
+        );
+      });
+    });
+
+    writes.push((batch) =>
+      batch.set(
+        db.collection("articlePosts").doc(article.id),
+        {
+          stats: {
+            views: Math.max(article.stats?.views ?? 0, 1800 + articleIndex * 315),
+            likes: Math.max(article.stats?.likes ?? 0, likeCount),
+            saves: Math.max(article.stats?.saves ?? 0, saveCount),
+            shares: Math.max(article.stats?.shares ?? 0, shareCount),
+            comments: Math.max(article.stats?.comments ?? 0, articleCommentCount),
+          },
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    );
+  });
+
+  await commitBatchedWrites(writes);
+  console.log(
+    `Seeded ${readerUsers.length} reader accounts and activity for ${seededArticles.length} article posts.`,
+  );
+}
+
+async function publishReaderReadyEditions() {
+  const [editionSnapshot, articleSnapshot] = await Promise.all([
+    db.collection("editions").where("accessRule", "==", "public").get(),
+    db.collection("articlePosts").where("status", "==", "published").get(),
+  ]);
+  const editionIdsWithPublishedPosts = new Set(
+    articleSnapshot.docs
+      .map((articleDoc) => articleDoc.data().editionId)
+      .filter((editionId): editionId is string => typeof editionId === "string"),
+  );
+  const readerReadyEditions = editionSnapshot.docs.filter((editionDoc) => {
+    const edition = editionDoc.data();
+
+    return (
+      edition.status !== "published" &&
+      Array.isArray(edition.pages) &&
+      edition.pages.length > 0 &&
+      editionIdsWithPublishedPosts.has(editionDoc.id)
+    );
+  });
+
+  if (readerReadyEditions.length === 0) {
+    console.log("No reader-ready editions needed publishing.");
+    return;
+  }
+
+  const batch = db.batch();
+
+  readerReadyEditions.forEach((editionDoc) => {
+    batch.set(
+      editionDoc.ref,
+      {
+        status: "published",
+        publishedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+
+  await batch.commit();
+  console.log(`Published ${readerReadyEditions.length} reader-ready editions.`);
+}
+
+async function upsertReaderAuthUser(account: {
+  email: string;
+  name: string;
+}) {
+  try {
+    const user = await auth.getUserByEmail(account.email);
+
+    return auth.updateUser(user.uid, {
+      displayName: account.name,
+      password: seededReaderPassword,
+      disabled: false,
+    });
+  } catch (error) {
+    if (!isAuthUserNotFoundError(error)) {
+      throw error;
+    }
+
+    return auth.createUser({
+      email: account.email,
+      password: seededReaderPassword,
+      displayName: account.name,
+      emailVerified: true,
+      disabled: false,
+    });
+  }
+}
+
+async function commitBatchedWrites(
+  writes: Array<(batch: WriteBatch) => void>,
+) {
+  for (let index = 0; index < writes.length; index += 450) {
+    const batch = db.batch();
+
+    writes.slice(index, index + 450).forEach((write) => write(batch));
+    await batch.commit();
+  }
+}
+
+function seedActivityDate(articleIndex: number, offset: number) {
+  return new Date(Date.UTC(2026, 4, 28, 3 + (articleIndex % 8), offset * 7));
+}
+
+function isSeedableArticle(value: unknown): value is {
+  id: string;
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  stats?: {
+    views?: number;
+    likes?: number;
+    saves?: number;
+    shares?: number;
+    comments?: number;
+  };
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "publisherId" in value &&
+    "editionId" in value &&
+    "pageId" in value &&
+    typeof value.id === "string" &&
+    typeof value.publisherId === "string" &&
+    typeof value.editionId === "string" &&
+    typeof value.pageId === "string"
+  );
+}
+
 async function setRoleClaims(userId: string, role: string, publisherIds: string[]) {
   try {
     const user = await auth.getUser(userId);
@@ -210,6 +508,7 @@ async function main() {
   await writeCollection("editionLocations", editionLocations);
   await writeCollection("editionLanguages", editionLanguages);
   await writeCollection("editions", editions);
+  await writeCollection("articleBlocks", articleBlocks);
   await writeCollection("articlePosts", articles);
   await writeCollection(
     "metrics",
@@ -217,6 +516,8 @@ async function main() {
   );
   await writeCollection("campaigns", campaigns);
   await seedAccessFixtures();
+  await seedReaderActivityFixtures();
+  await publishReaderReadyEditions();
 }
 
 main().catch((error: unknown) => {
@@ -241,5 +542,14 @@ function isFirestoreNotFoundError(error: unknown) {
     error !== null &&
     "code" in error &&
     error.code === 5
+  );
+}
+
+function isAuthUserNotFoundError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "auth/user-not-found"
   );
 }

@@ -22,6 +22,7 @@ import {
   updateDoc,
   type Firestore,
 } from "firebase/firestore";
+import { getFunctions, type Functions } from "firebase/functions";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { resolveLoginEmailInput } from "./config/testLoginAliases";
 
@@ -42,11 +43,15 @@ export const isFirebaseConfigured = Boolean(
     firebaseConfig.appId,
 );
 
+const functionsRegion =
+  import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION ?? "asia-south1";
+
 export interface FirebaseServices {
   app: FirebaseApp;
   auth: Auth;
   db: Firestore;
   storage: FirebaseStorage;
+  functions: Functions;
   analytics: Promise<Analytics | null>;
 }
 
@@ -62,11 +67,12 @@ export function getFirebaseServices(): FirebaseServices | null {
     const auth = getAuth(app);
     const db = getFirestore(app);
     const storage = getStorage(app);
+    const functions = getFunctions(app, functionsRegion);
     const analytics = isSupported().then((supported) =>
       supported ? getAnalytics(app) : null,
     );
 
-    services = { app, auth, db, storage, analytics };
+    services = { app, auth, db, storage, functions, analytics };
   }
 
   return services;

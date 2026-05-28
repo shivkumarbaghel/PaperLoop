@@ -1,7 +1,9 @@
 import type { User } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
 import {
   collection,
   doc,
+  deleteDoc,
   deleteField,
   getDoc,
   getDocs,
@@ -11,7 +13,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { getBlob, getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { deleteObject, getBlob, getDownloadURL, listAll, ref, uploadBytes } from "firebase/storage";
 import { getFirebaseServices } from "../firebase";
 import type {
   AccessRule,
@@ -47,6 +49,7 @@ const allowedContentTypes = new Set([
 
 export interface EditionDraftInput {
   publisherId: string;
+  publisherName: string;
   title: string;
   date: string;
   state: string;
@@ -120,6 +123,27 @@ export interface ArticleBlockInput {
   hotspotLabel: string;
 }
 
+export interface ArticlePostUpdateInput {
+  articleId: string;
+  editionId: string;
+  pageId: string;
+  blockId?: string;
+  type?: ArticleBlockType;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  authorName: string;
+  accessRule: AccessRule;
+  discussionRule: DiscussionRule;
+  hotspotLabel: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  regenerateClipImage?: boolean;
+}
+
 export interface ArticleBlockDraftInput {
   blockId?: string;
   publisherId: string;
@@ -139,6 +163,29 @@ export interface ArticleBlockDraftInput {
   width: number;
   height: number;
   confidence?: number;
+}
+
+export interface ClipRegionExtractionInput {
+  publisherId: string;
+  editionId: string;
+  pageId: string;
+  pageNumber: number;
+  pageSection: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ClipRegionExtraction {
+  type: ArticleBlockType;
+  label: string;
+  title: string;
+  section: string;
+  summary: string;
+  body: string;
+  confidence: number;
+  previewDataUrl?: string;
 }
 
 export interface CampaignInput {
@@ -202,41 +249,65 @@ export async function getPublisherArticlePostDetail(
     ...articleSnapshot.data(),
   } as ArticlePost;
 
-  if (!publisherIds.includes(article.publisherId)) {
+  if (
+    publisherIds.length > 0 &&
+    !publisherIds.some((publisherId) => samePublisherId(publisherId, article.publisherId))
+  ) {
     return null;
   }
 
-  const [commentSnapshot, engagementSnapshot, blockSnapshot] = await Promise.all([
-    getDocs(
-      query(
-        collection(firebase.db, "comments"),
-        where("articlePostId", "==", article.id),
-      ),
-    ),
-    getDocs(
-      query(
-        collection(firebase.db, "engagements"),
-        where("articlePostId", "==", article.id),
-      ),
-    ),
-    article.sourceBlockId
-      ? getDoc(doc(firebase.db, "articleBlocks", article.sourceBlockId))
-      : Promise.resolve(null),
-  ]);
+  const [commentSnapshot, engagementSnapshot, sourceBlockSnapshot, linkedBlockSnapshot] =
+    await Promise.all([
+      getDocs(
+        query(
+          collection(firebase.db, "comments"),
+          where("articlePostId", "==", article.id),
+        ),
+      ).catch(() => null),
+      getDocs(
+        query(
+          collection(firebase.db, "engagements"),
+          where("articlePostId", "==", article.id),
+        ),
+      ).catch(() => null),
+      article.sourceBlockId
+        ? getDoc(doc(firebase.db, "articleBlocks", article.sourceBlockId)).catch(() => null)
+        : Promise.resolve(null),
+      getDocs(
+        query(
+          collection(firebase.db, "articleBlocks"),
+          where("articlePostId", "==", article.id),
+        ),
+      ).catch(() => null),
+    ]);
 
-  const comments = commentSnapshot.docs
-    .map((documentSnapshot) => ({
-      id: documentSnapshot.id,
-      ...documentSnapshot.data(),
-    })) as PublisherCommentActivity[];
-  const engagements = engagementSnapshot.docs
-    .map((documentSnapshot) => ({
-      id: documentSnapshot.id,
-      ...documentSnapshot.data(),
-    })) as PublisherEngagementActivity[];
-  const block = blockSnapshot?.exists()
-    ? ({ id: blockSnapshot.id, ...blockSnapshot.data() } as ArticleBlock)
-    : null;
+  const comments = commentSnapshot
+    ? (commentSnapshot.docs.map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      })) as PublisherCommentActivity[])
+    : article.comments.map((comment) => ({
+        ...comment,
+        articlePostId: article.id,
+        publisherId: article.publisherId,
+        editionId: article.editionId,
+        pageId: article.pageId,
+        status: "published",
+      }));
+  const engagements = engagementSnapshot
+    ? (engagementSnapshot.docs.map((documentSnapshot) => ({
+        id: documentSnapshot.id,
+        ...documentSnapshot.data(),
+      })) as PublisherEngagementActivity[])
+    : [];
+  const block = sourceBlockSnapshot?.exists()
+    ? ({ id: sourceBlockSnapshot.id, ...sourceBlockSnapshot.data() } as ArticleBlock)
+    : linkedBlockSnapshot?.docs[0]
+      ? ({
+          id: linkedBlockSnapshot.docs[0].id,
+          ...linkedBlockSnapshot.docs[0].data(),
+        } as ArticleBlock)
+      : null;
 
   return {
     article,
@@ -258,7 +329,16 @@ export async function createEditionDraft(
 
   validateDraftInput(input);
 
-  const editionRef = doc(firebase.db, "editions", createEditionId(input));
+  const timestamp = formatEditionTimestamp(new Date());
+  const editionRef = doc(firebase.db, "editions", createEditionId(input, timestamp));
+  const editionTitle = buildEditionTitle({
+    publisherName: input.publisherName,
+    language: input.language,
+    city: input.city,
+    date: input.date,
+    timestamp,
+    headline: input.title,
+  });
   const sourceAssetPath = [
     "publishers",
     input.publisherId,
@@ -282,7 +362,7 @@ export async function createEditionDraft(
   const edition: Edition = {
     id: editionRef.id,
     publisherId: input.publisherId,
-    title: input.title.trim(),
+    title: editionTitle,
     date: input.date,
     state: input.state.trim(),
     city: input.city.trim(),
@@ -307,6 +387,197 @@ export async function createEditionDraft(
   });
 
   return edition;
+}
+
+export async function appendEditionPagesFromFile(
+  edition: Edition,
+  sourceFile: File,
+  user: User,
+): Promise<Edition> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.id || !edition.publisherId) {
+    throw new Error("Edition record is missing publisher or edition id.");
+  }
+
+  if (!allowedContentTypes.has(sourceFile.type)) {
+    throw new Error("Upload a PDF, JPG, PNG, or WebP page asset.");
+  }
+
+  if (sourceFile.size > maxUploadBytes) {
+    throw new Error("Page asset must be 25 MB or smaller.");
+  }
+
+  if (sourceFile.type === "application/pdf") {
+    const incomingPath = [
+      "publishers",
+      edition.publisherId,
+      "editions",
+      edition.id,
+      "incoming",
+      `${Date.now()}-${safeFileName(sourceFile.name)}`,
+    ].join("/");
+
+    await uploadBytes(ref(firebase.storage, incomingPath), sourceFile, {
+      contentType: sourceFile.type,
+      customMetadata: {
+        publisherId: edition.publisherId,
+        editionId: edition.id,
+        uploadedBy: user.uid,
+      },
+    });
+
+    const callable = httpsCallable<
+      {
+        publisherId: string;
+        editionId: string;
+        sourceAssetPath: string;
+        contentType: string;
+      },
+      { addedPageCount: number; pages: Page[] }
+    >(firebase.functions, "appendEditionPages");
+    const response = await callable({
+      publisherId: edition.publisherId,
+      editionId: edition.id,
+      sourceAssetPath: incomingPath,
+      contentType: sourceFile.type,
+    });
+    void response.data.addedPageCount;
+    const refreshedEdition = await getEditionById(edition.id);
+
+    if (!refreshedEdition) {
+      throw new Error("Pages were added but the edition could not be refreshed.");
+    }
+
+    return refreshedEdition;
+  }
+
+  const pageNumber = nextEditionPageNumber(edition.pages);
+  const pageId = `${edition.id}-p${pageNumber}`;
+  const { pageBlob, thumbnailBlob, width, height } =
+    await prepareClientPageAssets(sourceFile);
+  const imagePath = editionPageImagePath(edition, pageNumber);
+  const thumbnailPath = editionPageThumbnailPath(edition, pageNumber);
+
+  await Promise.all([
+    uploadBytes(ref(firebase.storage, imagePath), pageBlob, {
+      contentType: "image/png",
+      customMetadata: {
+        publisherId: edition.publisherId,
+        editionId: edition.id,
+        pageId,
+        pageNumber: String(pageNumber),
+        uploadedBy: user.uid,
+      },
+    }),
+    uploadBytes(ref(firebase.storage, thumbnailPath), thumbnailBlob, {
+      contentType: "image/webp",
+      customMetadata: {
+        publisherId: edition.publisherId,
+        editionId: edition.id,
+        pageId,
+        pageNumber: String(pageNumber),
+        uploadedBy: user.uid,
+      },
+    }),
+  ]);
+
+  const [imageUrl, thumbnailUrl] = await Promise.all([
+    getDownloadURL(ref(firebase.storage, imagePath)),
+    getDownloadURL(ref(firebase.storage, thumbnailPath)),
+  ]);
+  const section =
+    edition.sections[pageNumber - 1] ??
+    edition.sections[edition.sections.length - 1] ??
+    "General";
+  const newPage: Page = {
+    id: pageId,
+    editionId: edition.id,
+    pageNumber,
+    section,
+    headline: `${section} page`,
+    subhead: `${edition.city} edition • ${edition.date}`,
+    imageUrl,
+    thumbnailUrl,
+    width,
+    height,
+    processingStatus: "ready",
+    hotspots: [],
+  };
+  const nextPages = [...edition.pages, newPage];
+
+  await updateDoc(doc(firebase.db, "editions", edition.id), {
+    pages: nextPages,
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  });
+
+  return {
+    ...edition,
+    pages: nextPages,
+  };
+}
+
+export async function deletePublisherEdition(edition: Edition): Promise<void> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!edition.id || !edition.publisherId) {
+    throw new Error("Edition record is missing publisher or edition id.");
+  }
+
+  const [blocksSnapshot, postsSnapshot, commentsSnapshot, engagementsSnapshot] =
+    await Promise.all([
+      getDocs(
+        query(
+          collection(firebase.db, "articleBlocks"),
+          where("editionId", "==", edition.id),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(firebase.db, "articlePosts"),
+          where("editionId", "==", edition.id),
+        ),
+      ),
+      getDocs(
+        query(collection(firebase.db, "comments"), where("editionId", "==", edition.id)),
+      ),
+      getDocs(
+        query(
+          collection(firebase.db, "engagements"),
+          where("editionId", "==", edition.id),
+        ),
+      ),
+    ]);
+
+  const jobSnapshot = await getDoc(doc(firebase.db, "processingJobs", edition.id));
+
+  await Promise.all([
+    ...blocksSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...postsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...commentsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    ...engagementsSnapshot.docs.map((documentSnapshot) => deleteDoc(documentSnapshot.ref)),
+    jobSnapshot.exists()
+      ? deleteDoc(doc(firebase.db, "processingJobs", edition.id))
+      : Promise.resolve(),
+    deleteDoc(doc(firebase.db, "editions", edition.id)),
+  ]);
+
+  try {
+    await deleteStorageFolder(
+      ref(firebase.storage, `publishers/${edition.publisherId}/editions/${edition.id}`),
+    );
+  } catch {
+    // Storage cleanup is best-effort when files were never uploaded or already removed.
+  }
 }
 
 export async function getPublisherArticleBlocks(
@@ -367,6 +638,72 @@ export async function getPublisherComments(
   );
 }
 
+export async function extractClipRegionDetails(
+  input: ClipRegionExtractionInput,
+): Promise<ClipRegionExtraction> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  const callable = httpsCallable<ClipRegionExtractionInput, ClipRegionExtraction>(
+    firebase.functions,
+    "extractClipRegionDetails",
+  );
+  const response = await callable(input);
+
+  return response.data;
+}
+
+export async function createDraftClipPreviewUrl(
+  edition: Edition,
+  page: Page,
+  geometry: { x: number; y: number; width: number; height: number },
+): Promise<string | null> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return null;
+  }
+
+  try {
+    const sourceBlob = await getBlob(
+      ref(firebase.storage, processedPageImagePath(edition, page)),
+    );
+    const imageBitmap = await createImageBitmap(sourceBlob);
+    const crop = toPixelCrop(geometry, imageBitmap.width, imageBitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      imageBitmap.close();
+      return null;
+    }
+
+    context.drawImage(
+      imageBitmap,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height,
+    );
+    imageBitmap.close();
+
+    const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.9);
+
+    return URL.createObjectURL(clippedBlob);
+  } catch {
+    return null;
+  }
+}
+
 export async function saveArticleBlockDraft(
   input: ArticleBlockDraftInput,
   user: User,
@@ -417,6 +754,50 @@ export async function saveArticleBlockDraft(
   );
 
   return block;
+}
+
+export async function deleteArticleBlock(
+  block: ArticleBlock,
+  edition: Edition | null,
+): Promise<{ edition: Edition | null }> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  await deleteDoc(doc(firebase.db, "articleBlocks", block.id));
+
+  if (!edition || edition.id !== block.editionId) {
+    return { edition: null };
+  }
+
+  const nextPages = edition.pages.map((page) => ({
+    ...page,
+    hotspots: page.hotspots.filter(
+      (hotspot) =>
+        hotspot.blockId !== block.id &&
+        (!block.articlePostId || hotspot.articleId !== block.articlePostId),
+    ),
+  }));
+
+  const hotspotsChanged = JSON.stringify(nextPages) !== JSON.stringify(edition.pages);
+
+  if (!hotspotsChanged) {
+    return { edition };
+  }
+
+  await updateDoc(doc(firebase.db, "editions", edition.id), {
+    pages: nextPages,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    edition: {
+      ...edition,
+      pages: nextPages,
+    },
+  };
 }
 
 export async function updateArticleBlockStatus(
@@ -734,6 +1115,323 @@ export async function createArticleBlockFromPreviewPage(
   };
 }
 
+export async function getEditionById(editionId: string): Promise<Edition | null> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    return null;
+  }
+
+  const snapshot = await getDoc(doc(firebase.db, "editions", editionId));
+
+  return snapshot.exists()
+    ? ({ id: snapshot.id, ...snapshot.data() } as Edition)
+    : null;
+}
+
+export async function updatePublisherArticlePost(
+  input: ArticlePostUpdateInput,
+  user: User,
+): Promise<{ article: ArticlePost; edition: Edition; block: ArticleBlock | null }> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  const editionSnapshot = await getDoc(doc(firebase.db, "editions", input.editionId));
+
+  if (!editionSnapshot.exists()) {
+    throw new Error("Edition not found for this post.");
+  }
+
+  const edition = { id: editionSnapshot.id, ...editionSnapshot.data() } as Edition;
+  const articleSnapshot = await getDoc(doc(firebase.db, "articlePosts", input.articleId));
+
+  if (!articleSnapshot.exists()) {
+    throw new Error("Article post not found.");
+  }
+
+  const existingArticle = {
+    id: articleSnapshot.id,
+    ...articleSnapshot.data(),
+  } as ArticlePost;
+  const page = edition.pages.find((editionPage) => editionPage.id === input.pageId);
+
+  if (!page) {
+    throw new Error("Page not found for this article post.");
+  }
+
+  if (!input.title.trim() || !input.section.trim() || !input.hotspotLabel.trim()) {
+    throw new Error("Title, section, and hotspot label are required.");
+  }
+
+  const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
+  const blockGeometry = normalizeGeometry({
+    x: input.x,
+    y: input.y,
+    width: input.width,
+    height: input.height,
+  });
+  const geometryChanged =
+    JSON.stringify(existingArticle.blockGeometry ?? null) !== JSON.stringify(blockGeometry);
+  const shouldRegenerateClip = input.regenerateClipImage || geometryChanged;
+  const clippedAsset = shouldRegenerateClip
+    ? await createClippedArticleImage({
+        edition,
+        page,
+        articleId: existingArticle.id,
+        geometry: blockGeometry,
+      })
+    : null;
+  const hotspot: ArticleHotspot = {
+    id: `${existingArticle.id}-hotspot`,
+    articleId: existingArticle.id,
+    label: input.hotspotLabel.trim(),
+    ...blockGeometry,
+    blockId: input.blockId ?? existingArticle.sourceBlockId,
+    clippedImageUrl: clippedAsset?.url ?? existingArticle.clippedImageUrl,
+  };
+  const nextPages = edition.pages.map((editionPage) =>
+    editionPage.id === page.id
+      ? {
+          ...editionPage,
+          hotspots: [
+            ...editionPage.hotspots.filter(
+              (existingHotspot) => existingHotspot.articleId !== existingArticle.id,
+            ),
+            hotspot,
+          ],
+        }
+      : editionPage,
+  );
+  const updatedArticle: ArticlePost = {
+    ...existingArticle,
+    title: input.title.trim(),
+    section: input.section.trim(),
+    summary: input.summary.trim(),
+    body: input.body.trim(),
+    clippedImageTone: slugify(input.section) || existingArticle.clippedImageTone,
+    clippedImageUrl: clippedAsset?.url ?? existingArticle.clippedImageUrl,
+    clippedImagePath: clippedAsset?.path ?? existingArticle.clippedImagePath,
+    blockGeometry,
+    accessRule: input.accessRule,
+    discussionRule: input.discussionRule,
+    author: {
+      ...existingArticle.author,
+      name: input.authorName.trim() || existingArticle.author.name,
+      topics: [input.section.trim()],
+    },
+  };
+  const blockUpdates =
+    input.blockId && sourceBlock
+      ? {
+          type: input.type ?? sourceBlock.type,
+          title: input.title.trim(),
+          section: input.section.trim(),
+          summary: input.summary.trim(),
+          body: input.body.trim(),
+          ...blockGeometry,
+          clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
+          clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
+          updatedAt: serverTimestamp(),
+        }
+      : null;
+
+  await Promise.all([
+    updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), {
+      title: updatedArticle.title,
+      section: updatedArticle.section,
+      summary: updatedArticle.summary,
+      body: updatedArticle.body,
+      clippedImageTone: updatedArticle.clippedImageTone,
+      clippedImageUrl: updatedArticle.clippedImageUrl,
+      clippedImagePath: updatedArticle.clippedImagePath,
+      blockGeometry,
+      accessRule: updatedArticle.accessRule,
+      discussionRule: updatedArticle.discussionRule,
+      author: updatedArticle.author,
+      updatedAt: serverTimestamp(),
+      updatedBy: user.uid,
+    }),
+    updateDoc(doc(firebase.db, "editions", edition.id), {
+      pages: nextPages,
+      updatedAt: serverTimestamp(),
+    }),
+    blockUpdates && input.blockId
+      ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), blockUpdates)
+      : Promise.resolve(),
+  ]);
+
+  const block = input.blockId ? await getArticleBlock(input.blockId) : null;
+
+  return {
+    article: updatedArticle,
+    edition: {
+      ...edition,
+      pages: nextPages,
+    },
+    block,
+  };
+}
+
+const allowedClipImageContentTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+export interface ClipImageUploadInput {
+  articleId: string;
+  editionId: string;
+  pageId: string;
+  publisherId: string;
+  blockId?: string;
+  imageFile: File;
+}
+
+export async function uploadPublisherClipImage(
+  input: ClipImageUploadInput,
+  user: User,
+): Promise<{ article: ArticlePost; edition: Edition; block: ArticleBlock | null }> {
+  const firebase = getFirebaseServices();
+
+  if (!firebase) {
+    throw new Error("Firebase is not configured.");
+  }
+
+  if (!allowedClipImageContentTypes.has(input.imageFile.type)) {
+    throw new Error("Upload a JPEG, PNG, or WebP image.");
+  }
+
+  if (input.imageFile.size > maxUploadBytes) {
+    throw new Error("Image must be 25 MB or smaller.");
+  }
+
+  const editionSnapshot = await getDoc(doc(firebase.db, "editions", input.editionId));
+
+  if (!editionSnapshot.exists()) {
+    throw new Error("Edition not found for this post.");
+  }
+
+  const edition = { id: editionSnapshot.id, ...editionSnapshot.data() } as Edition;
+  const articleSnapshot = await getDoc(doc(firebase.db, "articlePosts", input.articleId));
+
+  if (!articleSnapshot.exists()) {
+    throw new Error("Article post not found.");
+  }
+
+  const existingArticle = {
+    id: articleSnapshot.id,
+    ...articleSnapshot.data(),
+  } as ArticlePost;
+  const page = edition.pages.find((editionPage) => editionPage.id === input.pageId);
+
+  if (!page) {
+    throw new Error("Page not found for this article post.");
+  }
+
+  const clippedPath = [
+    "publishers",
+    input.publisherId,
+    "editions",
+    edition.id,
+    "article-clips",
+    `${safeFileName(input.articleId)}.webp`,
+  ].join("/");
+  const clippedRef = ref(firebase.storage, clippedPath);
+
+  await uploadBytes(clippedRef, input.imageFile, {
+    contentType: input.imageFile.type,
+    customMetadata: {
+      publisherId: input.publisherId,
+      editionId: edition.id,
+      pageId: page.id,
+      articleId: input.articleId,
+      uploadedBy: user.uid,
+    },
+  });
+
+  const clippedImageUrl = await getDownloadURL(clippedRef);
+  const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
+  const existingHotspot = page.hotspots.find(
+    (hotspot) => hotspot.articleId === existingArticle.id,
+  );
+  const blockGeometry = sourceBlock
+    ? normalizeGeometry({
+        x: sourceBlock.x,
+        y: sourceBlock.y,
+        width: sourceBlock.width,
+        height: sourceBlock.height,
+      })
+    : existingHotspot
+      ? normalizeGeometry(existingHotspot)
+      : existingArticle.blockGeometry
+        ? normalizeGeometry(existingArticle.blockGeometry)
+        : { x: 0, y: 0, width: 100, height: 100 };
+  const hotspot: ArticleHotspot = {
+    id: `${existingArticle.id}-hotspot`,
+    articleId: existingArticle.id,
+    label: existingHotspot?.label ?? existingArticle.title,
+    ...blockGeometry,
+    blockId: input.blockId ?? existingArticle.sourceBlockId,
+    clippedImageUrl,
+  };
+  const nextPages = edition.pages.map((editionPage) =>
+    editionPage.id === page.id
+      ? {
+          ...editionPage,
+          hotspots: [
+            ...editionPage.hotspots.filter(
+              (existingHotspot) => existingHotspot.articleId !== existingArticle.id,
+            ),
+            hotspot,
+          ],
+        }
+      : editionPage,
+  );
+  const updatedArticle: ArticlePost = {
+    ...existingArticle,
+    clippedImageUrl,
+    clippedImagePath: clippedPath,
+  };
+  const blockUpdates =
+    input.blockId && sourceBlock
+      ? {
+          clippedImageUrl,
+          clippedImagePath: clippedPath,
+          updatedAt: serverTimestamp(),
+        }
+      : null;
+
+  await Promise.all([
+    updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), {
+      clippedImageUrl,
+      clippedImagePath: clippedPath,
+      updatedAt: serverTimestamp(),
+      updatedBy: user.uid,
+    }),
+    updateDoc(doc(firebase.db, "editions", edition.id), {
+      pages: nextPages,
+      updatedAt: serverTimestamp(),
+    }),
+    blockUpdates && input.blockId
+      ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), blockUpdates)
+      : Promise.resolve(),
+  ]);
+
+  const block = input.blockId ? await getArticleBlock(input.blockId) : null;
+
+  return {
+    article: updatedArticle,
+    edition: {
+      ...edition,
+      pages: nextPages,
+    },
+    block,
+  };
+}
+
 async function getArticleBlock(blockId: string) {
   const firebase = getFirebaseServices();
 
@@ -820,14 +1518,88 @@ async function createClippedArticleImage({
 }
 
 function processedPageImagePath(edition: Edition, page: Page) {
+  return editionPageImagePath(edition, page.pageNumber);
+}
+
+function editionPageImagePath(edition: Edition, pageNumber: number) {
   return [
     "publishers",
     edition.publisherId,
     "editions",
     edition.id,
     "pages",
-    `page-${page.pageNumber}.png`,
+    `page-${pageNumber}.png`,
   ].join("/");
+}
+
+function editionPageThumbnailPath(edition: Edition, pageNumber: number) {
+  return [
+    "publishers",
+    edition.publisherId,
+    "editions",
+    edition.id,
+    "thumbnails",
+    `page-${pageNumber}.webp`,
+  ].join("/");
+}
+
+function nextEditionPageNumber(pages: Page[]) {
+  if (!pages.length) {
+    return 1;
+  }
+
+  return Math.max(...pages.map((page) => page.pageNumber)) + 1;
+}
+
+async function prepareClientPageAssets(sourceFile: File) {
+  const sourceBitmap = await createImageBitmap(sourceFile);
+  const maxWidth = 1800;
+  const scale = sourceBitmap.width > maxWidth ? maxWidth / sourceBitmap.width : 1;
+  const width = Math.max(1, Math.round(sourceBitmap.width * scale));
+  const height = Math.max(1, Math.round(sourceBitmap.height * scale));
+  const pageCanvas = document.createElement("canvas");
+  pageCanvas.width = width;
+  pageCanvas.height = height;
+
+  const pageContext = pageCanvas.getContext("2d");
+
+  if (!pageContext) {
+    sourceBitmap.close();
+    throw new Error("Unable to prepare the page image.");
+  }
+
+  pageContext.drawImage(sourceBitmap, 0, 0, width, height);
+  sourceBitmap.close();
+
+  const pageBlob = await canvasToBlob(pageCanvas, "image/png", 0.92);
+  const thumbnailBitmap = await createImageBitmap(pageBlob);
+  const thumbMaxWidth = 360;
+  const thumbScale =
+    thumbnailBitmap.width > thumbMaxWidth ? thumbMaxWidth / thumbnailBitmap.width : 1;
+  const thumbWidth = Math.max(1, Math.round(thumbnailBitmap.width * thumbScale));
+  const thumbHeight = Math.max(1, Math.round(thumbnailBitmap.height * thumbScale));
+  const thumbCanvas = document.createElement("canvas");
+  thumbCanvas.width = thumbWidth;
+  thumbCanvas.height = thumbHeight;
+
+  const thumbContext = thumbCanvas.getContext("2d");
+
+  if (!thumbContext) {
+    thumbnailBitmap.close();
+    throw new Error("Unable to prepare the page thumbnail.");
+  }
+
+  thumbContext.drawImage(thumbnailBitmap, 0, 0, thumbWidth, thumbHeight);
+  thumbnailBitmap.close();
+
+  const thumbnailBlob = await canvasToBlob(thumbCanvas, "image/webp", 0.82);
+
+  return {
+    pageBlob,
+    thumbnailBlob,
+    width,
+    height,
+  };
 }
 
 function toPixelCrop(
@@ -904,12 +1676,13 @@ function normalizeGeometry(
 function validateDraftInput(input: EditionDraftInput) {
   if (
     !input.publisherId ||
-    !input.title.trim() ||
+    !input.publisherName.trim() ||
     !input.date ||
     !input.state.trim() ||
-    !input.city.trim()
+    !input.city.trim() ||
+    !input.language.trim()
   ) {
-    throw new Error("Publisher, title, date, state, and city are required.");
+    throw new Error("Publisher, date, state, city, and language are required.");
   }
 
   if (!input.sections.length) {
@@ -928,19 +1701,52 @@ function validateDraftInput(input: EditionDraftInput) {
 function validateArticleBlockInput(input: ArticleBlockInput) {
   if (
     !input.pageId ||
-    !input.title.trim() ||
-    !input.section.trim() ||
-    !input.summary.trim() ||
-    !input.body.trim() ||
-    !input.authorName.trim() ||
-    !input.hotspotLabel.trim()
+    !input.authorName.trim()
   ) {
-    throw new Error("Page, title, section, summary, body, author, and hotspot label are required.");
+    throw new Error("Page and author are required.");
   }
 }
 
-function createEditionId(input: EditionDraftInput) {
-  return `${input.publisherId}-${input.date}-${slugify(input.city)}`;
+function createEditionId(input: EditionDraftInput, timestamp: string) {
+  return `${input.publisherId}-${input.date}-${slugify(input.city)}-${timestamp}`;
+}
+
+function formatEditionTimestamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+  ].join("");
+}
+
+function buildEditionTitle(input: {
+  publisherName: string;
+  language: string;
+  city: string;
+  date: string;
+  timestamp: string;
+  headline: string;
+}) {
+  const publisherName = input.publisherName.trim() || "Edition";
+  const language = input.language.trim() || "Language";
+  const city = input.city.trim() || "City";
+  const headline = input.headline.trim();
+  const baseTitle = `${publisherName} • ${language} • ${city} • ${input.date} • ${input.timestamp}`;
+
+  return headline ? `${baseTitle} — ${headline}` : baseTitle;
+}
+
+async function deleteStorageFolder(folderRef: ReturnType<typeof ref>) {
+  const listing = await listAll(folderRef);
+
+  await Promise.all([
+    ...listing.items.map((itemRef) => deleteObject(itemRef)),
+    ...listing.prefixes.map((prefixRef) => deleteStorageFolder(prefixRef)),
+  ]);
 }
 
 function createArticleId(edition: Edition, input: ArticleBlockInput) {
@@ -1021,6 +1827,14 @@ function chunk<T>(values: T[], size: number) {
   }
 
   return chunks;
+}
+
+function samePublisherId(left: string, right: string) {
+  return normalizePublisherId(left) === normalizePublisherId(right);
+}
+
+function normalizePublisherId(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 function compareActivityCreatedAt(

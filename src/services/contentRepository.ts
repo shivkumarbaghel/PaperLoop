@@ -34,7 +34,7 @@ export async function getPaperLoopContent(): Promise<PaperLoopContent> {
     return mockContent;
   }
 
-  return withTimeout(readFirestoreContent(), 3500, mockContent);
+  return withTimeout(readFirestoreContent(), 8000, mockContent);
 }
 
 async function readFirestoreContent(): Promise<PaperLoopContent> {
