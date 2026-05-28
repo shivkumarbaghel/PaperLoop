@@ -242,6 +242,71 @@ function filterPublishersByLocale(
     .sort((a, b) => socialRankScore(b) - socialRankScore(a));
 }
 
+function resolveArticleCity(
+  article: ArticlePost,
+  editions: Edition[],
+  publishers: Publisher[],
+) {
+  if (article.city) {
+    return article.city;
+  }
+
+  const edition = editions.find((item) => item.id === article.editionId);
+  if (edition?.city) {
+    return edition.city;
+  }
+
+  return publishers.find((item) => item.id === article.publisherId)?.city;
+}
+
+function articleTrendingScore(article: ArticlePost) {
+  return (
+    article.stats.views +
+    (article.stats.likes ?? 0) * 12 +
+    article.stats.comments * 8 +
+    article.stats.shares * 6
+  );
+}
+
+function buildCityFeedArticles(
+  articles: ArticlePost[],
+  editions: Edition[],
+  publishers: Publisher[],
+  locations: EditionLocation[],
+  filters: { language: string; state: string; city: string },
+  profile: UserProfile | null,
+  userAccess: UserAccess,
+) {
+  const allowedPublisherIds = new Set(
+    filterPublishersByLocale(publishers, locations, filters).map((item) => item.id),
+  );
+
+  return articles
+    .filter((article) => {
+      if (article.status !== "published" || !allowedPublisherIds.has(article.publisherId)) {
+        return false;
+      }
+
+      if (!canReadArticle(article, profile, userAccess)) {
+        return false;
+      }
+
+      const articleCity = resolveArticleCity(article, editions, publishers);
+      const articleState = findLocationByCity(articleCity, locations)?.state;
+
+      if (filters.city !== "All") {
+        return articleCity === filters.city;
+      }
+
+      if (filters.state !== "All") {
+        return articleState === filters.state;
+      }
+
+      return true;
+    })
+    .sort((a, b) => articleTrendingScore(b) - articleTrendingScore(a));
+}
+
 function readEditionStudioContext(): EditionStudioContext | null {
   if (typeof window === "undefined") {
     return null;
@@ -523,10 +588,6 @@ function App() {
       }),
     [editionLocations, publishers, readerCity, readerLanguage, readerState],
   );
-  const trendingPublishers = useMemo(
-    () => readerFilteredPublishers.slice(0, 12),
-    [readerFilteredPublishers],
-  );
 
   const selectedPublisher = publishers.find(
     (publisher) => publisher.id === selectedPublisherId,
@@ -785,10 +846,12 @@ function App() {
                 authUser={authUser}
                 profile={profile}
                 userAccess={userAccess}
+                publishers={publishers}
+                allEditions={editions}
+                editionLocations={editionLocations}
                 publisher={selectedPublisher}
                 edition={selectedEdition}
                 editions={publisherEditions}
-                trendingPublishers={trendingPublishers}
                 readerLanguage={readerLanguage}
                 readerState={readerState}
                 readerCity={readerCity}
@@ -818,9 +881,11 @@ function App() {
             element={
               <ArticleRoute
                 articles={articles}
+                publishers={publishers}
                 authUser={authUser}
                 profile={profile}
                 userAccess={userAccess}
+                onOpenReader={openReader}
                 onAuthRequired={() =>
                   setAuthError("Please sign in with Gmail to use subscriber actions.")
                 }
@@ -1155,6 +1220,7 @@ interface SelectFilterProps {
   values: string[];
   onChange: (value: string) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 function SelectFilter({
@@ -1164,9 +1230,12 @@ function SelectFilter({
   values,
   onChange,
   disabled = false,
+  compact = false,
 }: SelectFilterProps) {
   return (
-    <label className={`select-filter${disabled ? " is-disabled" : ""}`}>
+    <label
+      className={`select-filter${disabled ? " is-disabled" : ""}${compact ? " compact" : ""}`}
+    >
       {icon}
       <span className="sr-only">{label}</span>
       <select
@@ -1250,10 +1319,12 @@ interface ReaderViewProps {
   authUser: User | null;
   profile: UserProfile | null;
   userAccess: UserAccess;
+  publishers: Publisher[];
+  allEditions: Edition[];
+  editionLocations: EditionLocation[];
   publisher: Publisher;
   edition: Edition;
   editions: Edition[];
-  trendingPublishers: Publisher[];
   readerLanguage: string;
   readerState: string;
   readerCity: string;
@@ -1274,72 +1345,131 @@ interface ReaderViewProps {
   onOpenArticle: (articleId: string) => void;
 }
 
-interface TrendingPublisherCarouselProps {
-  publishers: Publisher[];
-  selectedPublisherId: string;
-  onSelect: (publisherId: string) => void;
+interface CityFeedPostCardProps {
+  article: ArticlePost;
+  publisher: Publisher;
+  edition?: Edition;
+  articleCity?: string;
+  onOpen: (articleId: string) => void;
 }
 
-function TrendingPublisherCarousel({
-  publishers,
-  selectedPublisherId,
-  onSelect,
-}: TrendingPublisherCarouselProps) {
-  const trackRef = useRef<HTMLDivElement>(null);
-
-  function scrollCarousel(direction: "left" | "right") {
-    trackRef.current?.scrollBy({
-      left: direction === "left" ? -280 : 280,
-      behavior: "smooth",
-    });
-  }
-
+function CityFeedPostCard({
+  article,
+  publisher,
+  edition,
+  articleCity,
+  onOpen,
+}: CityFeedPostCardProps) {
   return (
-    <section className="reader-carousel" aria-label="Trending newspapers">
-      <div className="reader-carousel-header">
-        <div>
-          <span className="eyebrow">Most followed</span>
-          <h3>Trending newspapers</h3>
+    <article className="feed-post">
+      <header className="feed-post-header">
+        <div className="publisher-logo">{publisher.logo}</div>
+        <div className="feed-post-meta">
+          <strong>{publisher.name}</strong>
+          <span>
+            {edition?.date ?? publisher.latestEditionDate} • {article.section}
+            {articleCity ? ` • ${articleCity}` : ""}
+          </span>
         </div>
-        <div className="reader-carousel-controls">
-          <button
-            type="button"
-            aria-label="Scroll trending newspapers left"
-            onClick={() => scrollCarousel("left")}
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <button
-            type="button"
-            aria-label="Scroll trending newspapers right"
-            onClick={() => scrollCarousel("right")}
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
+      </header>
+
+      <button
+        type="button"
+        className="feed-post-content"
+        onClick={() => onOpen(article.id)}
+      >
+        <h3>{article.title}</h3>
+        <p>{article.summary}</p>
+        {article.clippedImageUrl ? (
+          <figure className="feed-post-image">
+            <img src={article.clippedImageUrl} alt={article.title} />
+          </figure>
+        ) : (
+          <div className={`feed-post-image placeholder clip-visual ${article.clippedImageTone}`}>
+            <span>{article.section}</span>
+          </div>
+        )}
+      </button>
+
+      <div className="feed-post-stats">
+        <span>
+          <Eye size={14} />
+          {article.stats.views.toLocaleString()} impressions
+        </span>
+        <span>
+          <Heart size={14} />
+          {(article.stats.likes ?? 0).toLocaleString()} likes
+        </span>
+        <span>
+          <MessageCircle size={14} />
+          {article.stats.comments} comments
+        </span>
+        <span>
+          <Share2 size={14} />
+          {article.stats.shares.toLocaleString()} shares
+        </span>
       </div>
 
-      {publishers.length === 0 ? (
-        <p className="empty-state reader-carousel-empty">
-          No newspapers match these filters yet.
-        </p>
-      ) : (
-        <div className="reader-carousel-track" ref={trackRef}>
-          {publishers.map((item, index) => (
-            <button
-              type="button"
+      <div className="feed-post-actions">
+        <button type="button" onClick={() => onOpen(article.id)}>
+          <Heart size={18} />
+          Like
+        </button>
+        <button type="button" onClick={() => onOpen(article.id)}>
+          <MessageCircle size={18} />
+          Comment
+        </button>
+        <button type="button" onClick={() => onOpen(article.id)}>
+          <Share2 size={18} />
+          Share
+        </button>
+      </div>
+    </article>
+  );
+}
+
+interface PublisherSidebarProps {
+  publishers: Publisher[];
+  selectedPublisherId: string;
+  onSelectPublisher: (publisherId: string) => void;
+  onReadEdition: (publisherId: string) => void;
+}
+
+function PublisherSidebar({
+  publishers,
+  selectedPublisherId,
+  onSelectPublisher,
+  onReadEdition,
+}: PublisherSidebarProps) {
+  return (
+    <>
+      <div className="section-heading compact">
+        <span className="eyebrow">Most followed</span>
+        <h2>Trending newspapers</h2>
+        <p>Follow publishers and open their latest edition.</p>
+      </div>
+
+      <div className="publisher-sidebar-list">
+        {publishers.length === 0 ? (
+          <p className="empty-state">No newspapers match these filters yet.</p>
+        ) : (
+          publishers.map((item, index) => (
+            <article
+              className={`publisher-sidebar-card${item.id === selectedPublisherId ? " active" : ""}`}
               key={item.id}
-              className={`reader-carousel-card${item.id === selectedPublisherId ? " active" : ""}`}
-              onClick={() => onSelect(item.id)}
             >
-              <div className="reader-carousel-card-head">
-                <div className="reader-carousel-card-main">
+              <div className="publisher-sidebar-card-head">
+                <button
+                  type="button"
+                  className="publisher-sidebar-main"
+                  onClick={() => onSelectPublisher(item.id)}
+                >
                   <div className="publisher-logo">{item.logo}</div>
-                  <div className="reader-carousel-copy">
-                    <div className="reader-carousel-title-row">
+                  <div className="publisher-sidebar-copy">
+                    <div className="publisher-sidebar-title-row">
                       <strong>{item.name}</strong>
                       {item.isLeading && (
-                        <span className="reader-carousel-badge">
+                        <span className="publisher-sidebar-badge">
                           <TrendingUp size={12} />
                           Trending
                         </span>
@@ -1353,18 +1483,54 @@ function TrendingPublisherCarousel({
                       {compactNumber(item.subscriberCount)} followers
                     </small>
                   </div>
-                </div>
-                <span className="reader-carousel-rank">#{index + 1}</span>
+                </button>
+                <span className="publisher-sidebar-rank">#{index + 1}</span>
               </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
+              <div className="publisher-sidebar-signals">
+                <span>
+                  <Bookmark size={14} />
+                  {compactNumber(item.bookmarkCount)}
+                </span>
+                <span>
+                  <Sparkles size={14} />
+                  {compactNumber(item.likeCount)}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="publisher-sidebar-read"
+                onClick={() => onReadEdition(item.id)}
+              >
+                <BookOpen size={16} />
+                Read edition
+              </button>
+            </article>
+          ))
+        )}
+      </div>
+    </>
   );
 }
 
-function ReaderView({
+interface ReaderPaperPanelProps {
+  articles: ArticlePost[];
+  authUser: User | null;
+  profile: UserProfile | null;
+  userAccess: UserAccess;
+  publisher: Publisher;
+  edition: Edition;
+  editions: Edition[];
+  pageIndex: number;
+  zoom: number;
+  readerMode: boolean;
+  onPageIndex: (value: number) => void;
+  onZoom: (value: number) => void;
+  onReaderMode: (value: boolean) => void;
+  onEditionId: (value: string) => void;
+  onOpenArticle: (articleId: string) => void;
+}
+
+function ReaderPaperPanel({
   articles,
   authUser,
   profile,
@@ -1372,59 +1538,20 @@ function ReaderView({
   publisher,
   edition,
   editions,
-  trendingPublishers,
-  readerLanguage,
-  readerState,
-  readerCity,
-  readerLanguageOptions,
-  readerStateOptions,
-  readerCityOptions,
   pageIndex,
   zoom,
   readerMode,
-  onReaderLanguage,
-  onReaderState,
-  onReaderCity,
-  onSelectPublisher,
   onPageIndex,
   onZoom,
   onReaderMode,
   onEditionId,
   onOpenArticle,
-}: ReaderViewProps) {
+}: ReaderPaperPanelProps) {
   const page = edition.pages[pageIndex] ?? edition.pages[0];
   const canReadSelectedEdition = canReadEdition(edition, profile, userAccess);
   const pageArticles = articles.filter(
     (article) => page && article.pageId === page.id && canReadArticle(article, profile, userAccess),
   );
-  const editionPageSummaries = edition.pages.map((editionPage, index) => {
-    const readableArticles = articles.filter(
-      (article) =>
-        article.pageId === editionPage.id && canReadArticle(article, profile, userAccess),
-    );
-
-    return {
-      page: editionPage,
-      index,
-      articleCount: readableArticles.length,
-      impressions: readableArticles.reduce(
-        (sum, article) => sum + article.stats.views,
-        0,
-      ),
-      likes: readableArticles.reduce(
-        (sum, article) => sum + (article.stats.likes ?? 0),
-        0,
-      ),
-      comments: readableArticles.reduce(
-        (sum, article) => sum + article.stats.comments,
-        0,
-      ),
-      shares: readableArticles.reduce(
-        (sum, article) => sum + article.stats.shares,
-        0,
-      ),
-    };
-  });
   const pageHotspots = useMemo(() => {
     if (!page) {
       return [];
@@ -1452,335 +1579,380 @@ function ReaderView({
   const hasPageImage = Boolean(page?.imageUrl);
 
   return (
+    <>
+      <div className="reader-control-bar">
+        <div className="reader-control-group">
+          <span className="eyebrow">Now reading</span>
+          <strong>{publisher.name}</strong>
+          <span>
+            {publisher.city} • {edition.date}
+          </span>
+          {authUser && (
+            <span className="access-chip">
+              {hasPublisherSubscription(userAccess, publisher.id)
+                ? "Subscriber access"
+                : canManagePublisher(profile, userAccess, publisher.id)
+                  ? "Publisher staff"
+                  : "Reader access"}
+            </span>
+          )}
+        </div>
+
+        <label className="edition-select compact">
+          <span>Edition</span>
+          <select
+            value={edition.id}
+            onChange={(event) => onEditionId(event.target.value)}
+          >
+            {editions.length === 0 ? (
+              <option value={edition.id}>{edition.title}</option>
+            ) : (
+              editions.map((publisherEdition) => (
+                <option key={publisherEdition.id} value={publisherEdition.id}>
+                  {publisherEdition.title} • {publisherEdition.date} •{" "}
+                  {formatRole(publisherEdition.status)}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+
+        <div className="edition-controls">
+          <button
+            onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
+            disabled={!hasPages || pageIndex === 0}
+            aria-label="Previous page"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span>
+            Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
+          </span>
+          <button
+            onClick={() =>
+              onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
+            }
+            disabled={!hasPages || pageIndex === edition.pages.length - 1}
+            aria-label="Next page"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        <div className="tool-row">
+          <button onClick={() => onZoom(Math.max(0.85, zoom - 0.1))} aria-label="Zoom out">
+            <ZoomOut size={18} />
+          </button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button onClick={() => onZoom(Math.min(1.25, zoom + 0.1))} aria-label="Zoom in">
+            <ZoomIn size={18} />
+          </button>
+          <button onClick={() => onZoom(1)} aria-label="Fit page">
+            <Fullscreen size={18} />
+          </button>
+          <button
+            className={readerMode ? "active" : ""}
+            onClick={() => onReaderMode(!readerMode)}
+            aria-pressed={readerMode}
+          >
+            Reader mode
+          </button>
+        </div>
+      </div>
+
+      {!canReadSelectedEdition && (
+        <section className="locked-panel" role="status">
+          <Lock size={22} />
+          <div>
+            <strong>Subscriber edition</strong>
+            <p>
+              Sign in with an eligible subscription or publisher staff account to read
+              this edition.
+            </p>
+          </div>
+        </section>
+      )}
+
+      <div className="viewer-toolbar">
+        <div>
+          <span className="eyebrow">Full-page e-paper</span>
+          <h1>{page?.headline ?? edition.title}</h1>
+        </div>
+        <div className="viewer-actions">
+          <button type="button">
+            <Bookmark size={18} />
+            Save edition
+          </button>
+          <button type="button">
+            <Share2 size={18} />
+            Share page
+          </button>
+        </div>
+      </div>
+
+      {hasPages && page && (
+        <div className="reader-page-sections">
+          {edition.pages.map((editionPage, index) => (
+            <button
+              type="button"
+              className={index === pageIndex ? "active" : ""}
+              key={editionPage.id}
+              onClick={() => onPageIndex(index)}
+            >
+              {editionPage.section}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div
+        className={`paper-stage ${readerMode ? "reader-mode" : ""}${hasPageImage ? " has-page-image" : ""}`}
+      >
+        {hasPages && page ? (
+          <div
+            className={`reader-page-stage${hasPageImage ? " has-image" : ""}`}
+            style={{ transform: `scale(${zoom})` }}
+          >
+            {hasPageImage ? (
+              <img
+                src={page.imageUrl}
+                alt={`${publisher.name} page ${page.pageNumber} - ${page.section}`}
+              />
+            ) : (
+              <div className="reader-page-placeholder">
+                <span className="eyebrow">
+                  {publisher.name} • Page {page.pageNumber}
+                </span>
+                <strong>{page.headline}</strong>
+                <p>{page.subhead}</p>
+                <p className="reader-page-placeholder-note">
+                  Page preview is still processing. Open clips from the city feed while
+                  pages finish rendering.
+                </p>
+              </div>
+            )}
+            {pageHotspots.map((hotspot) => (
+              <button
+                type="button"
+                className="hotspot"
+                key={hotspot.id}
+                style={{
+                  left: `${hotspot.x}%`,
+                  top: `${hotspot.y}%`,
+                  width: `${hotspot.width}%`,
+                  height: `${hotspot.height}%`,
+                }}
+                onClick={() => onOpenArticle(hotspot.articleId)}
+              >
+                <span>{hotspot.label}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-reader-page">
+            <Newspaper size={36} />
+            <strong>Edition pages are not ready yet</strong>
+            <p>
+              Publisher staff can generate readable page previews from the Admin workspace
+              before this edition opens in the reader.
+            </p>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ReaderView({
+  articles,
+  authUser,
+  profile,
+  userAccess,
+  publishers,
+  allEditions,
+  editionLocations,
+  publisher,
+  edition,
+  editions,
+  readerLanguage,
+  readerState,
+  readerCity,
+  readerLanguageOptions,
+  readerStateOptions,
+  readerCityOptions,
+  pageIndex,
+  zoom,
+  readerMode,
+  onReaderLanguage,
+  onReaderState,
+  onReaderCity,
+  onSelectPublisher,
+  onPageIndex,
+  onZoom,
+  onReaderMode,
+  onEditionId,
+  onOpenArticle,
+}: ReaderViewProps) {
+  const [showPaperView, setShowPaperView] = useState(false);
+  const localeFilters = useMemo(
+    () => ({
+      language: readerLanguage,
+      state: readerState,
+      city: readerCity,
+    }),
+    [readerCity, readerLanguage, readerState],
+  );
+  const cityFeedArticles = useMemo(
+    () =>
+      buildCityFeedArticles(
+        articles,
+        allEditions,
+        publishers,
+        editionLocations,
+        localeFilters,
+        profile,
+        userAccess,
+      ),
+    [
+      allEditions,
+      articles,
+      editionLocations,
+      localeFilters,
+      profile,
+      publishers,
+      userAccess,
+    ],
+  );
+  const sidebarPublishers = useMemo(
+    () => filterPublishersByLocale(publishers, editionLocations, localeFilters),
+    [editionLocations, localeFilters, publishers],
+  );
+
+  function handleReadEdition(publisherId: string) {
+    onSelectPublisher(publisherId);
+    setShowPaperView(true);
+  }
+
+  return (
     <section className="reader-layout">
-      <header className="reader-discovery workspace-panel">
-        <div className="reader-discovery-heading">
-          <span className="eyebrow">E-paper reader</span>
-          <h2>Pick a trending paper and read page by page</h2>
-          <p>
-            Filter by state, city, and language, then open clipped stories with live
-            impressions and subscriber discussion.
-          </p>
-        </div>
-
-        <div className="reader-filters">
-          <SelectFilter
-            icon={<Filter size={18} />}
-            label="Language"
-            value={readerLanguage}
-            values={readerLanguageOptions}
-            onChange={onReaderLanguage}
-          />
-          <SelectFilter
-            icon={<Globe2 size={18} />}
-            label="State"
-            value={readerState}
-            values={readerStateOptions}
-            onChange={onReaderState}
-          />
-          <SelectFilter
-            icon={<MapPin size={18} />}
-            label="City"
-            value={readerCity}
-            values={readerCityOptions}
-            onChange={onReaderCity}
-            disabled={readerState === "All"}
-          />
-        </div>
-
-        <TrendingPublisherCarousel
-          publishers={trendingPublishers}
-          selectedPublisherId={publisher.id}
-          onSelect={onSelectPublisher}
+      <div className="reader-filter-bar">
+        <SelectFilter
+          compact
+          icon={<Filter size={14} />}
+          label="Language"
+          value={readerLanguage}
+          values={readerLanguageOptions}
+          onChange={onReaderLanguage}
         />
-      </header>
+        <SelectFilter
+          compact
+          icon={<Globe2 size={14} />}
+          label="State"
+          value={readerState}
+          values={readerStateOptions}
+          onChange={onReaderState}
+        />
+        <SelectFilter
+          compact
+          icon={<MapPin size={14} />}
+          label="City"
+          value={readerCity}
+          values={readerCityOptions}
+          onChange={onReaderCity}
+          disabled={readerState === "All"}
+        />
+      </div>
 
       <div className="reader-workspace">
         <div className="reader-main">
-          <div className="reader-control-bar">
-            <div className="reader-control-group">
-              <span className="eyebrow">Now reading</span>
-              <strong>{publisher.name}</strong>
-              <span>
-                {publisher.city} • {edition.date}
-              </span>
-              {authUser && (
-                <span className="access-chip">
-                  {hasPublisherSubscription(userAccess, publisher.id)
-                    ? "Subscriber access"
-                    : canManagePublisher(profile, userAccess, publisher.id)
-                      ? "Publisher staff"
-                      : "Reader access"}
-                </span>
-              )}
-            </div>
-
-            <label className="edition-select compact">
-              <span>Edition</span>
-              <select
-                value={edition.id}
-                onChange={(event) => onEditionId(event.target.value)}
-              >
-                {editions.length === 0 ? (
-                  <option value={edition.id}>{edition.title}</option>
-                ) : (
-                  editions.map((publisherEdition) => (
-                    <option key={publisherEdition.id} value={publisherEdition.id}>
-                      {publisherEdition.title} • {publisherEdition.date} •{" "}
-                      {formatRole(publisherEdition.status)}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-
-            <div className="edition-controls">
+          {showPaperView ? (
+            <>
               <button
-                onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
-                disabled={!hasPages || pageIndex === 0}
-                aria-label="Previous page"
+                type="button"
+                className="back-button feed-back-button"
+                onClick={() => setShowPaperView(false)}
               >
-                <ChevronLeft size={18} />
+                <ArrowLeft size={18} />
+                Back to city feed
               </button>
-              <span>
-                Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
-              </span>
-              <button
-                onClick={() =>
-                  onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
-                }
-                disabled={!hasPages || pageIndex === edition.pages.length - 1}
-                aria-label="Next page"
-              >
-                <ChevronRight size={18} />
-              </button>
-            </div>
-
-            <div className="tool-row">
-              <button onClick={() => onZoom(Math.max(0.85, zoom - 0.1))} aria-label="Zoom out">
-                <ZoomOut size={18} />
-              </button>
-              <span>{Math.round(zoom * 100)}%</span>
-              <button onClick={() => onZoom(Math.min(1.25, zoom + 0.1))} aria-label="Zoom in">
-                <ZoomIn size={18} />
-              </button>
-              <button onClick={() => onZoom(1)} aria-label="Fit page">
-                <Fullscreen size={18} />
-              </button>
-              <button
-                className={readerMode ? "active" : ""}
-                onClick={() => onReaderMode(!readerMode)}
-                aria-pressed={readerMode}
-              >
-                Reader mode
-              </button>
-            </div>
-          </div>
-
-          {!canReadSelectedEdition && (
-            <section className="locked-panel" role="status">
-              <Lock size={22} />
-              <div>
-                <strong>Subscriber edition</strong>
-                <p>
-                  Sign in with an eligible subscription or publisher staff account to read
-                  this edition.
-                </p>
-              </div>
-            </section>
-          )}
-
-          <div className="viewer-toolbar">
-            <div>
-              <span className="eyebrow">Full-page e-paper</span>
-              <h1>{page?.headline ?? edition.title}</h1>
-            </div>
-            <div className="viewer-actions">
-              <button type="button">
-                <Bookmark size={18} />
-                Save edition
-              </button>
-              <button type="button">
-                <Share2 size={18} />
-                Share page
-              </button>
-            </div>
-          </div>
-
-          {hasPages && page && (
-            <div className="reader-page-sections">
-              {edition.pages.map((editionPage, index) => (
-                <button
-                  type="button"
-                  className={index === pageIndex ? "active" : ""}
-                  key={editionPage.id}
-                  onClick={() => onPageIndex(index)}
-                >
-                  {editionPage.section}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div
-            className={`paper-stage ${readerMode ? "reader-mode" : ""}${hasPageImage ? " has-page-image" : ""}`}
-          >
-            {hasPages && page ? (
-              <div
-                className={`reader-page-stage${hasPageImage ? " has-image" : ""}`}
-                style={{ transform: `scale(${zoom})` }}
-              >
-                {hasPageImage ? (
-                  <img
-                    src={page.imageUrl}
-                    alt={`${publisher.name} page ${page.pageNumber} - ${page.section}`}
-                  />
-                ) : (
-                  <div className="reader-page-placeholder">
-                    <span className="eyebrow">
-                      {publisher.name} • Page {page.pageNumber}
-                    </span>
-                    <strong>{page.headline}</strong>
-                    <p>{page.subhead}</p>
-                    <p className="reader-page-placeholder-note">
-                      Page preview is still processing. Use the story list on the right to
-                      open available clips.
+              <ReaderPaperPanel
+                articles={articles}
+                authUser={authUser}
+                profile={profile}
+                userAccess={userAccess}
+                publisher={publisher}
+                edition={edition}
+                editions={editions}
+                pageIndex={pageIndex}
+                zoom={zoom}
+                readerMode={readerMode}
+                onPageIndex={onPageIndex}
+                onZoom={onZoom}
+                onReaderMode={onReaderMode}
+                onEditionId={onEditionId}
+                onOpenArticle={onOpenArticle}
+              />
+            </>
+          ) : (
+            <>
+              <div className="city-feed">
+                {cityFeedArticles.length === 0 ? (
+                  <div className="empty-article-card feed-empty">
+                    <Sparkles size={20} />
+                    <strong>No city clips yet</strong>
+                    <p>
+                      Try another city filter or pick a trending newspaper from the
+                      sidebar to read today&apos;s edition.
                     </p>
                   </div>
+                ) : (
+                  cityFeedArticles.map((article) => {
+                    const articlePublisher =
+                      publishers.find((item) => item.id === article.publisherId) ??
+                      publisher;
+                    const articleEdition = allEditions.find(
+                      (item) => item.id === article.editionId,
+                    );
+
+                    return (
+                      <CityFeedPostCard
+                        key={article.id}
+                        article={article}
+                        publisher={articlePublisher}
+                        edition={articleEdition}
+                        articleCity={resolveArticleCity(
+                          article,
+                          allEditions,
+                          publishers,
+                        )}
+                        onOpen={onOpenArticle}
+                      />
+                    );
+                  })
                 )}
-                {pageHotspots.map((hotspot) => (
-                  <button
-                    type="button"
-                    className="hotspot"
-                    key={hotspot.id}
-                    style={{
-                      left: `${hotspot.x}%`,
-                      top: `${hotspot.y}%`,
-                      width: `${hotspot.width}%`,
-                      height: `${hotspot.height}%`,
-                    }}
-                    onClick={() => onOpenArticle(hotspot.articleId)}
-                  >
-                    <span>{hotspot.label}</span>
-                  </button>
-                ))}
               </div>
-            ) : (
-              <div className="empty-reader-page">
-                <Newspaper size={36} />
-                <strong>Edition pages are not ready yet</strong>
-                <p>
-                  Publisher staff can generate readable page previews from the Admin workspace
-                  before this edition opens in the reader.
+
+              {authUser ? (
+                <p className="reader-post-hint">
+                  Signed in as {authUser.displayName ?? authUser.email}. Open a story to
+                  like, comment, and follow the publisher.
                 </p>
-              </div>
-            )}
-          </div>
+              ) : (
+                <p className="reader-post-hint">
+                  Sign in to like, save, and post comments on clipped stories.
+                </p>
+              )}
+            </>
+          )}
         </div>
 
-        <aside className="reader-posts-panel">
-          <div className="section-heading compact">
-            <span className="eyebrow">Page {page?.pageNumber ?? 0}</span>
-            <h2>{page?.section ?? "Sections"}</h2>
-            <p>Stories and clips from the page you are viewing.</p>
-          </div>
-
-          {editionPageSummaries.length > 0 && (
-            <div className="reader-page-list">
-              {editionPageSummaries.map((summary) => (
-                <article
-                  className={`reader-page-card${summary.index === pageIndex ? " active" : ""}`}
-                  key={summary.page.id}
-                >
-                  <div>
-                    <span>Page {summary.page.pageNumber}</span>
-                    <strong>{summary.page.section}</strong>
-                  </div>
-                  <div className="reader-post-metrics">
-                    <span>
-                      <Newspaper size={14} />
-                      {summary.articleCount} clips
-                    </span>
-                    <span>
-                      <Eye size={14} />
-                      {summary.impressions.toLocaleString()} impressions
-                    </span>
-                    <span>
-                      <Heart size={14} />
-                      {summary.likes.toLocaleString()} likes
-                    </span>
-                    <span>
-                      <MessageCircle size={14} />
-                      {summary.comments.toLocaleString()} comments
-                    </span>
-                    <span>
-                      <Share2 size={14} />
-                      {summary.shares.toLocaleString()} shares
-                    </span>
-                  </div>
-                  <button type="button" onClick={() => onPageIndex(summary.index)}>
-                    Read page
-                  </button>
-                </article>
-              ))}
-            </div>
-          )}
-
-          <div className="reader-post-list">
-            {pageArticles.length === 0 ? (
-              <div className="empty-article-card">
-                <Sparkles size={20} />
-                <strong>Clips coming next</strong>
-                <p>
-                  Published preview pages are readable now. Editors add clickable story
-                  blocks and discussion threads in the clipping workflow.
-                </p>
-              </div>
-            ) : (
-              pageArticles.map((article) => (
-                <button
-                  type="button"
-                  className="reader-post-card"
-                  key={article.id}
-                  onClick={() => onOpenArticle(article.id)}
-                >
-                  <span>{article.section}</span>
-                  <strong>{article.title}</strong>
-                  <p>{article.summary}</p>
-                  <div className="reader-post-metrics">
-                    <span>
-                      <Eye size={14} />
-                      {article.stats.views.toLocaleString()} impressions
-                    </span>
-                    <span>
-                      <MessageCircle size={14} />
-                      {article.stats.comments} comments
-                    </span>
-                    <span>
-                      <Heart size={14} />
-                      {(article.stats.likes ?? 0).toLocaleString()} likes
-                    </span>
-                    <span>
-                      <Share2 size={14} />
-                      {article.stats.shares.toLocaleString()} shares
-                    </span>
-                  </div>
-                  <small>Read this clip and join the discussion</small>
-                </button>
-              ))
-            )}
-          </div>
-
-          {authUser ? (
-            <p className="reader-post-hint">
-              Signed in as {authUser.displayName ?? authUser.email}. Select a story to
-              read the full post and comment.
-            </p>
-          ) : (
-            <p className="reader-post-hint">
-              Sign in to like, save, and post comments on clipped stories.
-            </p>
-          )}
+        <aside className="reader-posts-panel publisher-sidebar">
+          <PublisherSidebar
+            publishers={sidebarPublishers}
+            selectedPublisherId={publisher.id}
+            onSelectPublisher={onSelectPublisher}
+            onReadEdition={handleReadEdition}
+          />
         </aside>
       </div>
     </section>
@@ -1789,20 +1961,24 @@ function ReaderView({
 
 interface ArticleViewProps {
   article: ArticlePost;
+  publisher?: Publisher;
   authUser: User | null;
   profile: UserProfile | null;
   userAccess: UserAccess;
   onBack: () => void;
   backLabel: string;
   onAuthRequired: () => void;
+  onOpenReader?: (publisher: Publisher) => void;
 }
 
 interface ArticleRouteProps {
   articles: ArticlePost[];
+  publishers: Publisher[];
   authUser: User | null;
   profile: UserProfile | null;
   userAccess: UserAccess;
   onAuthRequired: () => void;
+  onOpenReader: (publisher: Publisher) => void;
 }
 
 interface PublisherClipDetailRouteProps {
@@ -2406,15 +2582,18 @@ function PublisherClipDetailRoute({
 
 function ArticleRoute({
   articles,
+  publishers,
   authUser,
   profile,
   userAccess,
   onAuthRequired,
+  onOpenReader,
 }: ArticleRouteProps) {
   const { articleId } = useParams<{ articleId: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const article = articles.find((item) => item.id === articleId);
+  const publisher = publishers.find((item) => item.id === article?.publisherId);
   const studioContext = readEditionStudioContext();
   const fromEditionStudio =
     searchParams.get("from") === "edition-studio" ||
@@ -2449,24 +2628,28 @@ function ArticleRoute({
     <ArticleView
       key={article.id}
       article={article}
+      publisher={publisher}
       authUser={authUser}
       profile={profile}
       userAccess={userAccess}
       onBack={() => navigate(backNavigation.path)}
       backLabel={backNavigation.label}
       onAuthRequired={onAuthRequired}
+      onOpenReader={onOpenReader}
     />
   );
 }
 
 function ArticleView({
   article,
+  publisher,
   authUser,
   profile,
   userAccess,
   onBack,
   backLabel,
   onAuthRequired,
+  onOpenReader,
 }: ArticleViewProps) {
   const [comments, setComments] = useState<Comment[]>(() => article.comments);
   const [commentBody, setCommentBody] = useState("");
@@ -2630,6 +2813,58 @@ function ArticleView({
       </article>
 
       <div className="article-side-grid">
+        {publisher && (
+          <section className="workspace-panel publisher-context-panel">
+            <div className="section-heading compact">
+              <span className="eyebrow">Publisher</span>
+              <h2>{publisher.name}</h2>
+            </div>
+            <div className="publisher-context-card">
+              <div className="publisher-logo">{publisher.logo}</div>
+              <div>
+                <strong>{publisher.name}</strong>
+                <span>
+                  {publisher.city} • {publisher.language}
+                </span>
+                <small>
+                  <Users size={12} />
+                  {compactNumber(publisher.subscriberCount)} followers
+                </small>
+              </div>
+            </div>
+            <div className="publisher-context-actions">
+              <button
+                type="button"
+                onClick={() => handleEngagement("follow")}
+                disabled={pendingAction === "follow"}
+              >
+                <Bell size={18} />
+                {pendingAction === "follow" ? "Following..." : "Follow publisher"}
+              </button>
+              {onOpenReader && (
+                <button type="button" onClick={() => onOpenReader(publisher)}>
+                  <BookOpen size={18} />
+                  Read newspaper
+                </button>
+              )}
+            </div>
+            <div className="reader-post-metrics publisher-context-metrics">
+              <span>
+                <Eye size={14} />
+                {article.stats.views.toLocaleString()} impressions
+              </span>
+              <span>
+                <Heart size={14} />
+                {(article.stats.likes ?? 0).toLocaleString()} likes
+              </span>
+              <span>
+                <MessageCircle size={14} />
+                {Math.max(article.stats.comments, comments.length)} comments
+              </span>
+            </div>
+          </section>
+        )}
+
         <section className="workspace-panel">
           <div className="section-heading compact">
             <span className="eyebrow">Multimedia enrichment</span>
