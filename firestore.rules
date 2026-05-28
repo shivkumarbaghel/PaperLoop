@@ -36,6 +36,13 @@ service cloud.firestore {
       return isPlatformAdmin() || publisherStaff(publisherId);
     }
 
+    function publisherAdminStaff(publisherId) {
+      return signedIn()
+        && exists(publisherStaffPath(publisherId))
+        && get(publisherStaffPath(publisherId)).data.status == "active"
+        && get(publisherStaffPath(publisherId)).data.role in ["publisher_admin", "agency_admin"];
+    }
+
     function subscriptionPath(publisherId) {
       return /databases/$(database)/documents/subscriptions/$(request.auth.uid + "_" + publisherId);
     }
@@ -196,23 +203,61 @@ service cloud.firestore {
     match /publisherStaff/{membershipId} {
       allow read: if signedIn()
         && (request.auth.uid == resource.data.userId || canManagePublisher(resource.data.publisherId));
-      allow write: if isPlatformAdmin();
+      allow create: if isPlatformAdmin();
+      allow update: if isPlatformAdmin()
+        || (publisherAdminStaff(resource.data.publisherId)
+            && resource.data.role in ["editor", "columnist", "moderator"]
+            && request.resource.data.role in ["editor", "columnist", "moderator"]
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]));
+      allow delete: if isPlatformAdmin();
     }
 
     match /publisherInvites/{inviteId} {
       allow read: if signedIn()
         && (isPlatformAdmin() || canManagePublisher(resource.data.publisherId));
-      allow create: if isPlatformAdmin()
-        && request.resource.data.publisherId is string
+      allow create: if request.resource.data.publisherId is string
         && request.resource.data.email is string
         && request.resource.data.name is string
-        && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"]
-        && request.resource.data.status == "pending";
-      allow update: if isPlatformAdmin()
-        && request.resource.data.publisherId == resource.data.publisherId
-        && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"]
-        && request.resource.data.status in ["pending", "accepted", "revoked"];
+        && request.resource.data.status == "pending"
+        && (
+          (isPlatformAdmin()
+            && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"])
+          || (publisherAdminStaff(request.resource.data.publisherId)
+            && request.resource.data.role in ["editor", "columnist", "moderator"])
+        );
+      allow update: if request.resource.data.publisherId == resource.data.publisherId
+        && request.resource.data.status in ["pending", "accepted", "revoked"]
+        && (
+          (isPlatformAdmin()
+            && request.resource.data.role in ["agency_admin", "publisher_admin", "editor", "columnist", "moderator"])
+          || (publisherAdminStaff(resource.data.publisherId)
+            && resource.data.role in ["editor", "columnist", "moderator"]
+            && request.resource.data.role in ["editor", "columnist", "moderator"])
+        );
       allow delete: if isPlatformAdmin();
+    }
+
+    match /editorProfiles/{editorId} {
+      allow read: if true;
+      allow create: if isPlatformAdmin() || publisherAdminStaff(request.resource.data.publisherId);
+      allow update: if isPlatformAdmin()
+        || publisherAdminStaff(resource.data.publisherId)
+        || (signedIn()
+            && request.auth.uid == resource.data.userId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["bio", "topics", "avatarUrl", "updatedAt"]));
+      allow delete: if isPlatformAdmin();
+    }
+
+    match /editorFollows/{followId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid == request.resource.data.userId
+        && request.resource.data.status in ["active", "removed"];
+      allow update: if signedIn()
+        && request.auth.uid == resource.data.userId
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "updatedAt"]);
+      allow delete: if signedIn() && request.auth.uid == resource.data.userId;
     }
 
     match /metrics/{metricId} {

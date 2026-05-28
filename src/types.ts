@@ -96,6 +96,27 @@ export interface ArticleHotspot {
   clippedImageUrl?: string;
 }
 
+export interface EditorProfile {
+  id: string;
+  userId: string;
+  publisherId: string;
+  name: string;
+  bio: string;
+  avatarUrl: string | null;
+  topics: string[];
+  role: Extract<UserRole, "editor" | "columnist" | "moderator" | "publisher_admin" | "agency_admin">;
+  followers: number;
+  status: AccountStatus;
+}
+
+export interface EditorFollow {
+  id: string;
+  userId: string;
+  editorId: string;
+  publisherId: string;
+  status: "active" | "removed";
+}
+
 export interface ArticlePost {
   id: string;
   publisherId: string;
@@ -109,6 +130,7 @@ export interface ArticlePost {
   state?: string;
   area?: string;
   tags?: string[];
+  editorId?: string;
   author: Columnist;
   summary: string;
   body: string;
@@ -225,6 +247,8 @@ export interface ArticleBlock {
   state?: string;
   area?: string;
   tags?: string[];
+  editorId?: string;
+  authorName?: string;
   x: number;
   y: number;
   width: number;
@@ -281,6 +305,11 @@ export interface PublisherStaffMembership {
     "agency_admin" | "publisher_admin" | "editor" | "columnist" | "moderator"
   >;
   status: AccountStatus;
+}
+
+export interface PublisherStaffMemberSummary extends PublisherStaffMembership {
+  displayName: string;
+  displayEmail: string | null;
 }
 
 export interface PublisherStaffInvite {

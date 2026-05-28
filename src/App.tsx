@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -26,6 +27,7 @@ import {
   Flag,
   Fullscreen,
   Globe2,
+  Hand,
   Heart,
   LayoutDashboard,
   Lock,
@@ -35,6 +37,8 @@ import {
   Newspaper,
   Plus,
   ExternalLink,
+  Pencil,
+  EyeOff,
   Search,
   Share2,
   Trash2,
@@ -80,6 +84,12 @@ import {
   getPublisherStaffInvites,
   updatePublisherStaffStatus,
 } from "./services/accessManagementRepository";
+import {
+  getEditorFollowStatus,
+  getEditorProfile,
+  getPublisherEditorProfiles,
+  toggleEditorFollow,
+} from "./services/editorRepository";
 import {
   appendEditionPagesFromFile,
   createAdvertiserCampaign,
@@ -137,11 +147,13 @@ import type {
   Comment,
   DiscussionRule,
   Edition,
+  EditorProfile,
   EditionStatus,
   MetricCard,
   Page,
   Publisher,
   PublisherStaffInvite,
+  PublisherStaffMemberSummary,
   PublisherStaffMembership,
   UserProfile,
 } from "./types";
@@ -196,6 +208,11 @@ const staffRoles: PublisherStaffMembership["role"][] = [
   "editor",
   "moderator",
   "columnist",
+];
+const publisherInviteRoles: PublisherStaffMembership["role"][] = [
+  "editor",
+  "columnist",
+  "moderator",
 ];
 const blockTypes: ArticleBlockType[] = [
   "article",
@@ -422,6 +439,7 @@ function App() {
   const [readerState, setReaderState] = useState("All");
   const [readerCity, setReaderCity] = useState("All");
   const [pageIndex, setPageIndex] = useState(0);
+  const [readerPaperViewOpen, setReaderPaperViewOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [readerMode, setReaderMode] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -660,7 +678,11 @@ function App() {
   }
 
   useEffect(() => {
-    if (activeView !== "reader" || readerFilteredPublishers.length === 0) {
+    if (
+      activeView !== "reader" ||
+      readerFilteredPublishers.length === 0 ||
+      readerPaperViewOpen
+    ) {
       return;
     }
 
@@ -698,19 +720,46 @@ function App() {
     selectedEdition,
     selectedEditionId,
     selectedPublisherId,
+    readerPaperViewOpen,
   ]);
 
-  function openReader(publisher: Publisher) {
-    const nextEdition = editions
+  function resolveReaderPageIndex(article: ArticlePost, edition: Edition | undefined) {
+    if (!edition) {
+      return Math.max(0, article.pageNumber - 1);
+    }
+
+    const pageIndexById = edition.pages.findIndex((page) => page.id === article.pageId);
+
+    if (pageIndexById >= 0) {
+      return pageIndexById;
+    }
+
+    const pageIndexByNumber = edition.pages.findIndex(
+      (page) => page.pageNumber === article.pageNumber,
+    );
+
+    return pageIndexByNumber >= 0 ? pageIndexByNumber : Math.max(0, article.pageNumber - 1);
+  }
+
+  function openReader(publisher: Publisher, article?: ArticlePost) {
+    const publisherEditionsForReader = editions
       .filter((edition) => edition.publisherId === publisher.id)
-      .sort(compareEditionsForReader)[0];
+      .sort(compareEditionsForReader);
+    const targetEdition = article
+      ? editions.find((edition) => edition.id === article.editionId) ??
+        publisherEditionsForReader[0]
+      : publisherEditionsForReader[0];
+    const targetPageIndex = article
+      ? resolveReaderPageIndex(article, targetEdition)
+      : 0;
 
     setReaderLanguage(publisher.language);
     setReaderState(publisherStateName(publisher, editionLocations));
     setReaderCity(publisher.city);
     setSelectedPublisherId(publisher.id);
-    setSelectedEditionId(nextEdition?.id ?? "");
-    setPageIndex(0);
+    setSelectedEditionId(targetEdition?.id ?? "");
+    setPageIndex(targetPageIndex);
+    setReaderPaperViewOpen(Boolean(article));
     navigate("/reader");
   }
 
@@ -731,6 +780,7 @@ function App() {
         navigate(EDITION_STUDIO_PATH);
         break;
       case "reader":
+        setReaderPaperViewOpen(false);
         navigate("/reader");
         break;
       case "article":
@@ -860,6 +910,8 @@ function App() {
                 pageIndex={pageIndex}
                 zoom={zoom}
                 readerMode={readerMode}
+                paperViewOpen={readerPaperViewOpen}
+                onPaperViewOpenChange={setReaderPaperViewOpen}
                 onReaderLanguage={setReaderLanguage}
                 onReaderState={handleReaderStateChange}
                 onReaderCity={setReaderCity}
@@ -914,6 +966,25 @@ function App() {
                 profile={profile}
                 publishers={publishers}
                 userAccess={userAccess}
+                onArticleUpdated={(updatedArticle) =>
+                  setContent((prev) => ({
+                    ...prev,
+                    articles: prev.articles.map((a) =>
+                      a.id === updatedArticle.id ? updatedArticle : a,
+                    ),
+                  }))
+                }
+              />
+            }
+          />
+          <Route
+            path="/editor/:editorId"
+            element={
+              <EditorProfileRoute
+                articles={articles}
+                publishers={publishers}
+                authUser={authUser}
+                profile={profile}
               />
             }
           />
@@ -1333,6 +1404,8 @@ interface ReaderViewProps {
   pageIndex: number;
   zoom: number;
   readerMode: boolean;
+  paperViewOpen: boolean;
+  onPaperViewOpenChange: (open: boolean) => void;
   onReaderLanguage: (value: string) => void;
   onReaderState: (value: string) => void;
   onReaderCity: (value: string) => void;
@@ -1511,6 +1584,430 @@ function PublisherSidebar({
   );
 }
 
+interface PageHotspotView {
+  id: string;
+  articleId: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ReaderPageLightboxProps {
+  open: boolean;
+  publisher: Publisher;
+  edition: Edition;
+  page: Page;
+  pageIndex: number;
+  pageHotspots: PageHotspotView[];
+  hasPageImage: boolean;
+  showClips: boolean;
+  zoom: number;
+  onClose: () => void;
+  onPageIndex: (value: number) => void;
+  onZoom: (value: number) => void;
+  onShowClipsChange: (value: boolean) => void;
+  onOpenArticle: (articleId: string) => void;
+}
+
+function clampPageZoom(value: number) {
+  return Math.min(2, Math.max(0.6, value));
+}
+
+function ReaderPageLightbox({
+  open,
+  publisher,
+  edition,
+  page,
+  pageIndex,
+  pageHotspots,
+  hasPageImage,
+  showClips,
+  zoom,
+  onClose,
+  onPageIndex,
+  onZoom,
+  onShowClipsChange,
+  onOpenArticle,
+}: ReaderPageLightboxProps) {
+  const pageCount = Math.max(edition.pages.length, 1);
+  const {
+    viewportRef,
+    grabMode,
+    setGrabMode,
+    resetPan,
+    handleFit,
+    viewportClassName,
+    viewportHandlers,
+    transformStyle,
+  } = usePanZoomViewport(zoom, onZoom);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    resetPan();
+    setGrabMode(true);
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+
+      if (event.key === "ArrowLeft" && pageIndex > 0) {
+        onPageIndex(pageIndex - 1);
+      }
+
+      if (event.key === "ArrowRight" && pageIndex < edition.pages.length - 1) {
+        onPageIndex(pageIndex + 1);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [edition.pages.length, onClose, onPageIndex, open, pageIndex, resetPan, setGrabMode]);
+
+  useEffect(() => {
+    resetPan();
+  }, [page.id, pageIndex, resetPan]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="reader-page-lightbox" role="dialog" aria-modal="true" aria-label="Enlarged newspaper page">
+      <button
+        type="button"
+        className="clip-lightbox-backdrop"
+        aria-label="Close enlarged page"
+        onClick={onClose}
+      />
+
+      <div className="reader-page-lightbox-shell">
+        <div className="reader-page-lightbox-toolbar">
+          <div className="reader-page-lightbox-caption">
+            <strong>{publisher.name}</strong>
+            <span>
+              Page {page.pageNumber} of {pageCount} • {page.section}
+            </span>
+          </div>
+
+          <div className="edition-controls">
+            <button
+              type="button"
+              aria-label="Previous page"
+              disabled={pageIndex === 0}
+              onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <span>
+              Page {page.pageNumber} of {pageCount}
+            </span>
+            <button
+              type="button"
+              aria-label="Next page"
+              disabled={pageIndex >= edition.pages.length - 1}
+              onClick={() =>
+                onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
+              }
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          <div className="studio-toolbar-group zoom-controls">
+            <span>Zoom</span>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              onClick={() => onZoom(clampPageZoom(zoom - 0.1))}
+            >
+              <ZoomOut size={16} />
+            </button>
+            <input
+              type="range"
+              min="60"
+              max="200"
+              step="5"
+              value={Math.round(zoom * 100)}
+              onChange={(event) => onZoom(clampPageZoom(Number(event.target.value) / 100))}
+              aria-label="Page zoom level"
+            />
+            <span>{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              onClick={() => onZoom(clampPageZoom(zoom + 0.1))}
+            >
+              <ZoomIn size={16} />
+            </button>
+            <button type="button" onClick={handleFit}>
+              Fit
+            </button>
+          </div>
+
+          <div className="reader-page-lightbox-actions">
+            <button
+              type="button"
+              className={grabMode ? "active" : ""}
+              aria-pressed={grabMode}
+              onClick={() => setGrabMode((current) => !current)}
+            >
+              <Hand size={16} />
+              {grabMode ? "Grab" : "Select"}
+            </button>
+            <button
+              type="button"
+              className={showClips ? "" : "active"}
+              aria-pressed={showClips}
+              onClick={() => onShowClipsChange(!showClips)}
+            >
+              <EyeOff size={16} />
+              {showClips ? "Hide clips" : "Show clips"}
+            </button>
+            <button type="button" className="clip-lightbox-close" onClick={onClose}>
+              <X size={18} />
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="reader-page-lightbox-stage">
+          <button
+            type="button"
+            className="reader-page-lightbox-nav prev"
+            aria-label="Previous page"
+            disabled={pageIndex === 0}
+            onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
+          >
+            <ChevronLeft size={24} />
+          </button>
+
+          <div
+            ref={viewportRef}
+            className={viewportClassName}
+            {...viewportHandlers}
+          >
+            <div className="reader-page-lightbox-transform" style={transformStyle}>
+              <div
+                className={`reader-page-stage reader-page-lightbox-page${hasPageImage ? " has-image" : ""}`}
+              >
+                {hasPageImage ? (
+                  <img
+                    src={page.imageUrl}
+                    alt={`${publisher.name} page ${page.pageNumber} - ${page.section}`}
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="reader-page-placeholder">
+                    <span className="eyebrow">
+                      {publisher.name} • Page {page.pageNumber}
+                    </span>
+                    <strong>{page.headline}</strong>
+                    <p>{page.subhead}</p>
+                  </div>
+                )}
+                {showClips &&
+                  !grabMode &&
+                  pageHotspots.map((hotspot) => (
+                    <button
+                      type="button"
+                      className="hotspot"
+                      key={hotspot.id}
+                      style={{
+                        left: `${hotspot.x}%`,
+                        top: `${hotspot.y}%`,
+                        width: `${hotspot.width}%`,
+                        height: `${hotspot.height}%`,
+                      }}
+                      onClick={() => onOpenArticle(hotspot.articleId)}
+                    >
+                      <span>{hotspot.label}</span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="reader-page-lightbox-nav next"
+            aria-label="Next page"
+            disabled={pageIndex >= edition.pages.length - 1}
+            onClick={() =>
+              onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
+            }
+          >
+            <ChevronRight size={24} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getPointerDistance(pointers: Map<number, { x: number; y: number }>) {
+  const points = [...pointers.values()];
+
+  if (points.length < 2) {
+    return 0;
+  }
+
+  return Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+}
+
+function usePanZoomViewport(zoom: number, onZoom: (value: number) => void) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const panDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [grabMode, setGrabMode] = useState(true);
+  const [isGrabbing, setIsGrabbing] = useState(false);
+
+  const resetPan = useCallback(() => {
+    setPan({ x: 0, y: 0 });
+    setIsGrabbing(false);
+    panDragRef.current = null;
+    pinchRef.current = null;
+    pointersRef.current.clear();
+  }, []);
+
+  const resetView = useCallback(() => {
+    onZoom(1);
+    resetPan();
+    setGrabMode(true);
+  }, [onZoom, resetPan]);
+
+  const handleFit = useCallback(() => {
+    onZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [onZoom]);
+
+  function canPanViewport() {
+    return grabMode || zoom > 1;
+  }
+
+  function updatePointer(event: React.PointerEvent) {
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  }
+
+  function removePointer(event: React.PointerEvent) {
+    pointersRef.current.delete(event.pointerId);
+
+    if (pointersRef.current.size < 2) {
+      pinchRef.current = null;
+    }
+
+    if (panDragRef.current?.pointerId === event.pointerId) {
+      panDragRef.current = null;
+      setIsGrabbing(false);
+    }
+  }
+
+  function handleViewportPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    updatePointer(event);
+    viewportRef.current?.setPointerCapture(event.pointerId);
+
+    if (pointersRef.current.size >= 2) {
+      const distance = getPointerDistance(pointersRef.current);
+      if (distance > 0) {
+        pinchRef.current = { distance, zoom };
+      }
+      panDragRef.current = null;
+      setIsGrabbing(false);
+      return;
+    }
+
+    if (!canPanViewport()) {
+      return;
+    }
+
+    panDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: pan.x,
+      originY: pan.y,
+    };
+    setIsGrabbing(true);
+  }
+
+  function handleViewportPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    updatePointer(event);
+
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const distance = getPointerDistance(pointersRef.current);
+      if (distance > 0) {
+        onZoom(
+          clampPageZoom(pinchRef.current.zoom * (distance / pinchRef.current.distance)),
+        );
+      }
+      return;
+    }
+
+    const dragState = panDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    setPan({
+      x: dragState.originX + (event.clientX - dragState.startX),
+      y: dragState.originY + (event.clientY - dragState.startY),
+    });
+  }
+
+  function handleViewportPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    removePointer(event);
+    viewportRef.current?.releasePointerCapture(event.pointerId);
+  }
+
+  function handleViewportWheel(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    onZoom(clampPageZoom(zoom + (event.deltaY > 0 ? -0.08 : 0.08)));
+  }
+
+  return {
+    viewportRef,
+    grabMode,
+    setGrabMode,
+    resetPan,
+    resetView,
+    handleFit,
+    viewportClassName: `reader-page-lightbox-viewport${grabMode ? " grab-mode" : ""}${isGrabbing ? " is-grabbing" : ""}`,
+    viewportHandlers: {
+      onPointerDown: handleViewportPointerDown,
+      onPointerMove: handleViewportPointerMove,
+      onPointerUp: handleViewportPointerUp,
+      onPointerCancel: handleViewportPointerUp,
+      onWheel: handleViewportWheel,
+    },
+    transformStyle: {
+      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+    },
+  };
+}
+
 interface ReaderPaperPanelProps {
   articles: ArticlePost[];
   authUser: User | null;
@@ -1546,6 +2043,8 @@ function ReaderPaperPanel({
   onEditionId,
   onOpenArticle,
 }: ReaderPaperPanelProps) {
+  const [pageLightboxOpen, setPageLightboxOpen] = useState(false);
+  const [showClips, setShowClips] = useState(true);
   const page = edition.pages[pageIndex] ?? edition.pages[0];
   const canReadSelectedEdition = canReadEdition(edition, profile, userAccess);
   const pageArticles = articles.filter(
@@ -1646,7 +2145,21 @@ function ReaderPaperPanel({
           <button onClick={() => onZoom(Math.min(1.25, zoom + 0.1))} aria-label="Zoom in">
             <ZoomIn size={18} />
           </button>
-          <button onClick={() => onZoom(1)} aria-label="Fit page">
+          <button
+            type="button"
+            className={showClips ? "" : "active"}
+            aria-pressed={showClips}
+            onClick={() => setShowClips((current) => !current)}
+          >
+            <EyeOff size={18} />
+            {showClips ? "Hide clips" : "Show clips"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPageLightboxOpen(true)}
+            aria-label="Enlarge page"
+            disabled={!hasPages || !page}
+          >
             <Fullscreen size={18} />
           </button>
           <button
@@ -1689,21 +2202,6 @@ function ReaderPaperPanel({
         </div>
       </div>
 
-      {hasPages && page && (
-        <div className="reader-page-sections">
-          {edition.pages.map((editionPage, index) => (
-            <button
-              type="button"
-              className={index === pageIndex ? "active" : ""}
-              key={editionPage.id}
-              onClick={() => onPageIndex(index)}
-            >
-              {editionPage.section}
-            </button>
-          ))}
-        </div>
-      )}
-
       <div
         className={`paper-stage ${readerMode ? "reader-mode" : ""}${hasPageImage ? " has-page-image" : ""}`}
       >
@@ -1730,22 +2228,23 @@ function ReaderPaperPanel({
                 </p>
               </div>
             )}
-            {pageHotspots.map((hotspot) => (
-              <button
-                type="button"
-                className="hotspot"
-                key={hotspot.id}
-                style={{
-                  left: `${hotspot.x}%`,
-                  top: `${hotspot.y}%`,
-                  width: `${hotspot.width}%`,
-                  height: `${hotspot.height}%`,
-                }}
-                onClick={() => onOpenArticle(hotspot.articleId)}
-              >
-                <span>{hotspot.label}</span>
-              </button>
-            ))}
+            {showClips &&
+              pageHotspots.map((hotspot) => (
+                <button
+                  type="button"
+                  className="hotspot"
+                  key={hotspot.id}
+                  style={{
+                    left: `${hotspot.x}%`,
+                    top: `${hotspot.y}%`,
+                    width: `${hotspot.width}%`,
+                    height: `${hotspot.height}%`,
+                  }}
+                  onClick={() => onOpenArticle(hotspot.articleId)}
+                >
+                  <span>{hotspot.label}</span>
+                </button>
+              ))}
           </div>
         ) : (
           <div className="empty-reader-page">
@@ -1758,6 +2257,25 @@ function ReaderPaperPanel({
           </div>
         )}
       </div>
+
+      {page && (
+        <ReaderPageLightbox
+          open={pageLightboxOpen}
+          publisher={publisher}
+          edition={edition}
+          page={page}
+          pageIndex={pageIndex}
+          pageHotspots={pageHotspots}
+          hasPageImage={hasPageImage}
+          showClips={showClips}
+          zoom={zoom}
+          onClose={() => setPageLightboxOpen(false)}
+          onPageIndex={onPageIndex}
+          onZoom={onZoom}
+          onShowClipsChange={setShowClips}
+          onOpenArticle={onOpenArticle}
+        />
+      )}
     </>
   );
 }
@@ -1782,6 +2300,8 @@ function ReaderView({
   pageIndex,
   zoom,
   readerMode,
+  paperViewOpen,
+  onPaperViewOpenChange,
   onReaderLanguage,
   onReaderState,
   onReaderCity,
@@ -1792,7 +2312,6 @@ function ReaderView({
   onEditionId,
   onOpenArticle,
 }: ReaderViewProps) {
-  const [showPaperView, setShowPaperView] = useState(false);
   const localeFilters = useMemo(
     () => ({
       language: readerLanguage,
@@ -1829,7 +2348,7 @@ function ReaderView({
 
   function handleReadEdition(publisherId: string) {
     onSelectPublisher(publisherId);
-    setShowPaperView(true);
+    onPaperViewOpenChange(true);
   }
 
   return (
@@ -1864,12 +2383,12 @@ function ReaderView({
 
       <div className="reader-workspace">
         <div className="reader-main">
-          {showPaperView ? (
+          {paperViewOpen ? (
             <>
               <button
                 type="button"
                 className="back-button feed-back-button"
-                onClick={() => setShowPaperView(false)}
+                onClick={() => onPaperViewOpenChange(false)}
               >
                 <ArrowLeft size={18} />
                 Back to city feed
@@ -1967,7 +2486,7 @@ interface ArticleViewProps {
   onBack: () => void;
   backLabel: string;
   onAuthRequired: () => void;
-  onOpenReader?: (publisher: Publisher) => void;
+  onOpenReader?: (publisher: Publisher, article?: ArticlePost) => void;
 }
 
 interface ArticleRouteProps {
@@ -1977,7 +2496,7 @@ interface ArticleRouteProps {
   profile: UserProfile | null;
   userAccess: UserAccess;
   onAuthRequired: () => void;
-  onOpenReader: (publisher: Publisher) => void;
+  onOpenReader: (publisher: Publisher, article?: ArticlePost) => void;
 }
 
 interface PublisherClipDetailRouteProps {
@@ -1986,6 +2505,7 @@ interface PublisherClipDetailRouteProps {
   profile: UserProfile | null;
   publishers: Publisher[];
   userAccess: UserAccess;
+  onArticleUpdated: (article: ArticlePost) => void;
 }
 
 function PublisherClipDetailRoute({
@@ -1994,6 +2514,7 @@ function PublisherClipDetailRoute({
   profile,
   publishers,
   userAccess,
+  onArticleUpdated,
 }: PublisherClipDetailRouteProps) {
   const { articleId } = useParams<{ articleId: string }>();
   const navigate = useNavigate();
@@ -2016,6 +2537,7 @@ function PublisherClipDetailRoute({
   );
   const [editMessage, setEditMessage] = useState("");
   const [clipImageFile, setClipImageFile] = useState<File | null>(null);
+  const [clipImagePreviewUrl, setClipImagePreviewUrl] = useState<string | null>(null);
   const [clipImageStatus, setClipImageStatus] = useState<
     "idle" | "uploading" | "success" | "error"
   >("idle");
@@ -2116,6 +2638,10 @@ function PublisherClipDetailRoute({
     setClipImageFile(null);
     setClipImageStatus("idle");
     setClipImageMessage("");
+    if (clipImagePreviewUrl) {
+      URL.revokeObjectURL(clipImagePreviewUrl);
+    }
+    setClipImagePreviewUrl(null);
     if (clipImageInputRef.current) {
       clipImageInputRef.current.value = "";
     }
@@ -2202,7 +2728,23 @@ function PublisherClipDetailRoute({
     setClipImageFile(nextFile);
     setClipImageStatus("idle");
     setClipImageMessage("");
+    setClipImagePreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+
+      return nextFile ? URL.createObjectURL(nextFile) : null;
+    });
   }
+
+  useEffect(
+    () => () => {
+      if (clipImagePreviewUrl) {
+        URL.revokeObjectURL(clipImagePreviewUrl);
+      }
+    },
+    [clipImagePreviewUrl],
+  );
 
   async function handleClipImageUpload() {
     if (!authUser || !article || !clipImageFile) {
@@ -2237,12 +2779,20 @@ function PublisherClipDetailRoute({
           : currentDetail,
       );
       setArticle(result.article);
+      onArticleUpdated(result.article);
       setClipImageFile(null);
+      setClipImagePreviewUrl((currentPreviewUrl) => {
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+
+        return null;
+      });
       if (clipImageInputRef.current) {
         clipImageInputRef.current.value = "";
       }
       setClipImageStatus("success");
-      setClipImageMessage("Clip image replaced.");
+      setClipImageMessage("Clip image replaced. The preview below should update immediately.");
     } catch (error) {
       setClipImageStatus("error");
       setClipImageMessage(
@@ -2321,7 +2871,11 @@ function PublisherClipDetailRoute({
 
           {article.clippedImageUrl ? (
             <figure className="article-clip-image clip-detail-preview">
-              <img src={article.clippedImageUrl} alt={article.title} />
+              <img
+                key={article.clippedImageUrl}
+                src={article.clippedImageUrl}
+                alt={article.title}
+              />
               <figcaption>Current clipped image</figcaption>
             </figure>
           ) : (
@@ -2350,6 +2904,12 @@ function PublisherClipDetailRoute({
               </label>
               {clipImageFile && (
                 <p className="clip-image-file-name">Selected: {clipImageFile.name}</p>
+              )}
+              {clipImagePreviewUrl && (
+                <figure className="article-clip-image clip-detail-preview replacement-preview">
+                  <img src={clipImagePreviewUrl} alt="Replacement clip preview" />
+                  <figcaption>Replacement preview (upload to apply)</figcaption>
+                </figure>
               )}
               <div className="clip-image-upload-actions">
                 <button
@@ -2655,13 +3215,23 @@ function ClipImageLightbox({
   onClose,
 }: ClipImageLightboxProps) {
   const [zoom, setZoom] = useState(1);
+  const {
+    viewportRef,
+    grabMode,
+    setGrabMode,
+    resetView,
+    handleFit,
+    viewportClassName,
+    viewportHandlers,
+    transformStyle,
+  } = usePanZoomViewport(zoom, setZoom);
 
   useEffect(() => {
     if (!open) {
       return undefined;
     }
 
-    setZoom(1);
+    resetView();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -2676,7 +3246,7 @@ function ClipImageLightbox({
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "";
     };
-  }, [open, onClose]);
+  }, [onClose, open, resetView]);
 
   if (!open) {
     return null;
@@ -2703,44 +3273,62 @@ function ClipImageLightbox({
             <button
               type="button"
               aria-label="Zoom out"
-              onClick={() => setZoom((currentZoom) => Math.max(0.5, currentZoom - 0.1))}
+              onClick={() => setZoom((currentZoom) => clampPageZoom(currentZoom - 0.1))}
             >
               <ZoomOut size={16} />
             </button>
             <input
               type="range"
-              min="50"
+              min="60"
               max="200"
               step="5"
               value={Math.round(zoom * 100)}
-              onChange={(event) => setZoom(Number(event.target.value) / 100)}
+              onChange={(event) => setZoom(clampPageZoom(Number(event.target.value) / 100))}
               aria-label="Clip zoom level"
             />
             <span>{Math.round(zoom * 100)}%</span>
             <button
               type="button"
               aria-label="Zoom in"
-              onClick={() => setZoom((currentZoom) => Math.min(2, currentZoom + 0.1))}
+              onClick={() => setZoom((currentZoom) => clampPageZoom(currentZoom + 0.1))}
             >
               <ZoomIn size={16} />
             </button>
-            <button type="button" onClick={() => setZoom(1)}>
+            <button type="button" onClick={handleFit}>
               Fit
             </button>
           </div>
 
-          <button type="button" className="clip-lightbox-close" onClick={onClose}>
-            <X size={18} />
-            Close
-          </button>
+          <div className="reader-page-lightbox-actions">
+            <button
+              type="button"
+              className={grabMode ? "active" : ""}
+              aria-pressed={grabMode}
+              onClick={() => setGrabMode((current) => !current)}
+            >
+              <Hand size={16} />
+              {grabMode ? "Grab" : "Select"}
+            </button>
+            <button type="button" className="clip-lightbox-close" onClick={onClose}>
+              <X size={18} />
+              Close
+            </button>
+          </div>
         </div>
 
-        <div className="clip-lightbox-stage">
-          <img
-            src={imageUrl}
-            alt={title}
-            style={{ transform: `scale(${zoom})` }}
-          />
+        <div
+          ref={viewportRef}
+          className={`clip-lightbox-stage ${viewportClassName}`}
+          {...viewportHandlers}
+        >
+          <div className="reader-page-lightbox-transform" style={transformStyle}>
+            <img
+              className="clip-lightbox-image"
+              src={imageUrl}
+              alt={title}
+              draggable={false}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -2899,12 +3487,23 @@ function ArticleView({
           <div className="byline-card compact">
             <div className="avatar">{article.author.name.slice(0, 1)}</div>
             <div>
-              <strong>{article.author.name}</strong>
+              {article.editorId ? (
+                <Link to={`/editor/${article.editorId}`}>
+                  <strong>{article.author.name}</strong>
+                </Link>
+              ) : (
+                <strong>{article.author.name}</strong>
+              )}
               <span>
                 {article.author.publication} • {article.author.followers.toLocaleString()} followers
               </span>
             </div>
-            {!publisher && (
+            {article.editorId ? (
+              <Link to={`/editor/${article.editorId}`} className="byline-profile-link">
+                <UserRound size={16} />
+                View profile
+              </Link>
+            ) : !publisher && (
               <button
                 type="button"
                 onClick={() => handleEngagement("follow")}
@@ -2984,7 +3583,7 @@ function ArticleView({
                 {pendingAction === "follow" ? "Following..." : "Follow publisher"}
               </button>
               {onOpenReader && (
-                <button type="button" onClick={() => onOpenReader(publisher)}>
+                <button type="button" onClick={() => onOpenReader(publisher, article)}>
                   <BookOpen size={18} />
                   Read newspaper
                 </button>
@@ -3436,7 +4035,7 @@ function AdminView({
   const [workspaceComments, setWorkspaceComments] = useState<PublisherCommentActivity[]>([]);
   const [createdArticles, setCreatedArticles] = useState<ArticlePost[]>([]);
   const [createdCampaigns, setCreatedCampaigns] = useState<Campaign[]>([]);
-  const [staffDirectory, setStaffDirectory] = useState<PublisherStaffMembership[]>([]);
+  const [staffDirectory, setStaffDirectory] = useState<PublisherStaffMemberSummary[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PublisherStaffInvite[]>([]);
   const [accessStatus, setAccessStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -3451,7 +4050,7 @@ function AdminView({
   const [inviteName, setInviteName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] =
-    useState<PublisherStaffMembership["role"]>("publisher_admin");
+    useState<PublisherStaffMembership["role"]>("editor");
   const [inviteStatus, setInviteStatus] = useState<
     "idle" | "saving" | "success" | "error"
   >("idle");
@@ -3483,6 +4082,8 @@ function AdminView({
   const [articleArea, setArticleArea] = useState("");
   const [articleTagsInput, setArticleTagsInput] = useState("");
   const [articleAuthorName, setArticleAuthorName] = useState("Publisher Desk");
+  const [articleEditorId, setArticleEditorId] = useState("");
+  const [publisherEditorProfiles, setPublisherEditorProfiles] = useState<EditorProfile[]>([]);
   const [articleHotspotLabel, setArticleHotspotLabel] = useState("Open story");
   const [articleAccessRule, setArticleAccessRule] = useState<AccessRule>("public");
   const [articleDiscussionRule, setArticleDiscussionRule] =
@@ -3491,6 +4092,12 @@ function AdminView({
     "idle" | "saving" | "success" | "error"
   >("idle");
   const [articleCreateMessage, setArticleCreateMessage] = useState("");
+  const [sectionClipImageFile, setSectionClipImageFile] = useState<File | null>(null);
+  const [sectionClipImageStatus, setSectionClipImageStatus] = useState<
+    "idle" | "uploading" | "success" | "error"
+  >("idle");
+  const [sectionClipImageMessage, setSectionClipImageMessage] = useState("");
+  const sectionClipImageInputRef = useRef<HTMLInputElement>(null);
   const [selectedBlockId, setSelectedBlockId] = useState(
     restoredStudioContext?.selectedBlockId ?? "",
   );
@@ -3569,6 +4176,7 @@ function AdminView({
     () => reviewQueue.find((edition) => edition.id === previewEditionId) ?? null,
     [previewEditionId, reviewQueue],
   );
+  const studioPublisherId = previewEdition?.publisherId ?? selectedDraftPublisherId;
   const selectedArticlePage =
     previewEdition?.pages.find((page) => page.id === articlePageId) ??
     previewEdition?.pages[0] ??
@@ -3746,6 +4354,17 @@ function AdminView({
   }, [workspacePublisherIds, workspaceRefreshKey]);
 
   useEffect(() => {
+    if (!studioPublisherId) {
+      setPublisherEditorProfiles([]);
+      return;
+    }
+
+    getPublisherEditorProfiles(studioPublisherId)
+      .then(setPublisherEditorProfiles)
+      .catch(() => setPublisherEditorProfiles([]));
+  }, [studioPublisherId]);
+
+  useEffect(() => {
     const hasProcessingEdition = reviewQueue.some(
       (edition) => edition.status === "processing",
     );
@@ -3815,6 +4434,8 @@ function AdminView({
     setArticleBody(article.body);
     setArticleArea(article.area ?? "");
     setArticleTagsInput(formatTagsInput(article.tags));
+    setArticleAuthorName(article.author.name);
+    setArticleEditorId(article.editorId ?? "");
     setArticleHotspotLabel(getHotspotLabelForArticle(previewEdition, article));
     setArticleAccessRule(article.accessRule);
     setArticleDiscussionRule(article.discussionRule);
@@ -4031,9 +4652,19 @@ function AdminView({
   async function handleInviteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!authUser || !canManagePlatform(profile)) {
+    const isPublisherAdmin =
+      profile?.role === "publisher_admin" || profile?.role === "agency_admin";
+    const isEditorRole = (publisherInviteRoles as string[]).includes(inviteRole);
+
+    if (!authUser || (!canManagePlatform(profile) && !isPublisherAdmin)) {
       setInviteStatus("error");
-      setInviteMessage("Only a platform super admin can create agency access invites.");
+      setInviteMessage("Publisher admin or platform admin authorization required.");
+      return;
+    }
+
+    if (!canManagePlatform(profile) && !isEditorRole) {
+      setInviteStatus("error");
+      setInviteMessage("Publisher admins can only invite editors, columnists, or moderators.");
       return;
     }
 
@@ -4059,7 +4690,9 @@ function AdminView({
       setInviteEmail("");
       setInviteStatus("success");
       setInviteMessage(
-        "Invite recorded. Run the grant command after the user exists in Firebase Auth.",
+        canManagePlatform(profile)
+          ? "Invite recorded. Run the grant command after the user exists in Firebase Auth."
+          : "Invite recorded. Platform admin will activate this account.",
       );
     } catch (error) {
       setInviteStatus("error");
@@ -4340,6 +4973,8 @@ function AdminView({
     setArticleBody("");
     setArticleArea("");
     setArticleTagsInput("");
+    setArticleAuthorName("Publisher Desk");
+    setArticleEditorId("");
     setArticleHotspotLabel("Manual block");
     setBlockX(8);
     setBlockY(16);
@@ -4349,6 +4984,12 @@ function AdminView({
     setBlockMessage("");
     setArticleCreateStatus("idle");
     setArticleCreateMessage("");
+    setSectionClipImageFile(null);
+    setSectionClipImageStatus("idle");
+    setSectionClipImageMessage("");
+    if (sectionClipImageInputRef.current) {
+      sectionClipImageInputRef.current.value = "";
+    }
   }
 
   function resetCurrentSectionForm() {
@@ -4388,6 +5029,7 @@ function AdminView({
         selectedBlock?.body?.trim() ||
         "Publisher will add cleaned story text here after OCR review.",
       authorName: articleAuthorName.trim() || "Publisher Desk",
+      editorId: articleEditorId,
       city:
         previewEdition?.city ??
         selectedBlock?.city ??
@@ -4592,6 +5234,8 @@ function AdminView({
     setArticleBody(block.body);
     setArticleArea(block.area ?? "");
     setArticleTagsInput(formatTagsInput(block.tags));
+    setArticleEditorId(block.editorId ?? "");
+    setArticleAuthorName(block.authorName ?? "Publisher Desk");
     setArticleHotspotLabel(block.label);
     setBlockX(geometry.x);
     setBlockY(geometry.y);
@@ -4599,6 +5243,12 @@ function AdminView({
     setBlockHeight(geometry.height);
     setArticleCreateStatus("idle");
     setArticleCreateMessage("");
+    setSectionClipImageFile(null);
+    setSectionClipImageStatus("idle");
+    setSectionClipImageMessage("");
+    if (sectionClipImageInputRef.current) {
+      sectionClipImageInputRef.current.value = "";
+    }
     if (previewEdition) {
       const linkedPost =
         publisherArticles.find((article) => article.id === block.articlePostId) ??
@@ -4646,6 +5296,7 @@ function AdminView({
           area: defaults.area,
           tags: defaults.tags,
           authorName: defaults.authorName,
+          editorId: defaults.editorId,
           accessRule: articleAccessRule,
           discussionRule: articleDiscussionRule,
           hotspotLabel: defaults.hotspotLabel,
@@ -4686,6 +5337,81 @@ function AdminView({
       setArticleCreateStatus("error");
       setArticleCreateMessage(
         error instanceof Error ? error.message : "Unable to refresh the clip image.",
+      );
+    }
+  }
+
+  function handleSectionClipImageFileChange(event: ChangeEvent<HTMLInputElement>) {
+    setSectionClipImageFile(event.target.files?.[0] ?? null);
+    setSectionClipImageStatus("idle");
+    setSectionClipImageMessage("");
+  }
+
+  async function handleSectionClipImageUpload() {
+    if (
+      !authUser ||
+      !previewEdition ||
+      !selectedArticlePage ||
+      !selectedClipSavedPost ||
+      !selectedBlock ||
+      !sectionClipImageFile
+    ) {
+      setSectionClipImageStatus("error");
+      setSectionClipImageMessage("Choose an image file before uploading.");
+      return;
+    }
+
+    setSectionClipImageStatus("uploading");
+    setSectionClipImageMessage("");
+
+    try {
+      const result = await uploadPublisherClipImage(
+        {
+          articleId: selectedClipSavedPost.id,
+          editionId: previewEdition.id,
+          pageId: selectedArticlePage.id,
+          publisherId: previewEdition.publisherId,
+          blockId: selectedBlock.id,
+          imageFile: sectionClipImageFile,
+        },
+        authUser,
+      );
+
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, result.edition),
+      );
+      setCreatedDrafts((currentDrafts) =>
+        currentDrafts.map((draft) =>
+          draft.id === result.edition.id ? result.edition : draft,
+        ),
+      );
+      setCreatedArticles((currentArticles) =>
+        currentArticles.map((article) =>
+          article.id === result.article.id ? result.article : article,
+        ),
+      );
+
+      if (result.block) {
+        setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, result.block!));
+      }
+
+      hydrateSectionFormFromArticle(result.article);
+      clearDraftClipPreview();
+
+      if (result.article.clippedImageUrl) {
+        setDraftClipPreviewUrl(result.article.clippedImageUrl);
+      }
+
+      setSectionClipImageFile(null);
+      setSectionClipImageStatus("success");
+      setSectionClipImageMessage("Clip image replaced. The preview should update immediately.");
+      if (sectionClipImageInputRef.current) {
+        sectionClipImageInputRef.current.value = "";
+      }
+    } catch (error) {
+      setSectionClipImageStatus("error");
+      setSectionClipImageMessage(
+        error instanceof Error ? error.message : "Unable to upload this clip image.",
       );
     }
   }
@@ -4750,6 +5476,8 @@ function AdminView({
           state: defaults.state,
           area: defaults.area,
           tags: defaults.tags,
+          editorId: defaults.editorId,
+          authorName: defaults.authorName,
           x: blockX,
           y: blockY,
           width: blockWidth,
@@ -4841,7 +5569,9 @@ function AdminView({
 
       setStaffDirectory((currentMembers) =>
         currentMembers.map((currentMember) =>
-          currentMember.id === nextMember.id ? nextMember : currentMember,
+          currentMember.id === nextMember.id
+            ? { ...currentMember, ...nextMember }
+            : currentMember,
         ),
       );
       setStaffActionMessage(`${formatRole(member.role)} ${formatRole(status)}.`);
@@ -4894,20 +5624,21 @@ function AdminView({
             city: defaults.city,
             state: defaults.state,
             area: defaults.area,
-            tags: defaults.tags,
-            authorName: defaults.authorName,
-            accessRule: articleAccessRule,
-            discussionRule: articleDiscussionRule,
-            hotspotLabel: defaults.hotspotLabel,
-            regenerateClipImage: true,
-            ...geometry,
-          },
-          authUser,
-        );
+          tags: defaults.tags,
+          authorName: defaults.authorName,
+          editorId: defaults.editorId,
+          accessRule: articleAccessRule,
+          discussionRule: articleDiscussionRule,
+          hotspotLabel: defaults.hotspotLabel,
+          regenerateClipImage: true,
+          ...geometry,
+        },
+        authUser,
+      );
 
-        setWorkspaceEditions((currentEditions) =>
-          upsertEdition(currentEditions, updateResult.edition),
-        );
+      setWorkspaceEditions((currentEditions) =>
+        upsertEdition(currentEditions, updateResult.edition),
+      );
         setCreatedDrafts((currentDrafts) =>
           currentDrafts.map((draft) =>
             draft.id === updateResult.edition.id ? updateResult.edition : draft,
@@ -4952,6 +5683,7 @@ function AdminView({
           area: defaults.area,
           tags: defaults.tags,
           authorName: defaults.authorName,
+          editorId: defaults.editorId,
           accessRule: articleAccessRule,
           discussionRule: articleDiscussionRule,
           hotspotLabel: defaults.hotspotLabel,
@@ -4984,6 +5716,8 @@ function AdminView({
             state: result.article.state,
             area: result.article.area,
             tags: result.article.tags,
+            editorId: result.article.editorId,
+            authorName: result.article.author.name,
           }
         : null;
 
@@ -5180,7 +5914,8 @@ function AdminView({
                       <div>
                         <strong>{formatRole(member.role)}</strong>
                         <span>
-                          {publisherName(publishers, member.publisherId)} • {member.userId}
+                          {publisherName(publishers, member.publisherId)} •{" "}
+                          {member.displayEmail ?? member.displayName}
                         </span>
                       </div>
                       <div className="staff-actions">
@@ -5275,6 +6010,7 @@ function AdminView({
                         );
 
                         setDraftPublisherId(event.target.value);
+                        setArticleEditorId("");
 
                         if (nextPublisher) {
                           setLocationDraftFromPublisher(nextPublisher, editionLocations);
@@ -5842,326 +6578,370 @@ function AdminView({
               {sectionPanelOpen && selectedArticlePage && (
                 <aside className="section-panel">
                   <div className="section-panel-header">
-                    <strong>Section post</strong>
-                    <span>Page {selectedArticlePage.pageNumber}</span>
-                  </div>
-                  <form className="article-block-form compact" onSubmit={handleArticleBlockSubmit}>
-                    {(draftClipPreviewUrl ||
-                      selectedClipSavedPost?.clippedImageUrl ||
-                      selectedBlock?.clippedImageUrl) && (
-                      <figure className="saved-clip-preview">
-                        <img
-                          src={
-                            draftClipPreviewUrl ||
-                            selectedClipSavedPost?.clippedImageUrl ||
-                            selectedBlock?.clippedImageUrl
-                          }
-                          alt={articleTitle || blockLabel || "Selected clip"}
-                        />
-                        <figcaption>
-                          {clipExtractStatus === "loading"
-                            ? "Analyzing clip..."
-                            : selectedClipSavedPost
-                              ? "Published clip image"
-                              : draftClipPreviewUrl
-                                ? "Drawn clip preview"
-                                : "Saved clipping"}
-                        </figcaption>
-                      </figure>
-                    )}
-                    {clipExtractStatus === "loading" && (
-                      <p className="clip-extract-status loading">Extracting clip details...</p>
-                    )}
-                    <div className="form-grid">
-                      <label>
-                        <span>Type</span>
-                        <select
-                          value={blockType}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) =>
-                            setBlockType(event.target.value as ArticleBlockType)
-                          }
-                        >
-                          {blockTypes.map((type) => (
-                            <option key={type} value={type}>
-                              {formatRole(type)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Section</span>
-                        <input
-                          value={articleSection}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) => setArticleSection(event.target.value)}
-                        />
-                      </label>
-                      <label>
-                        <span>Title</span>
-                        <input
-                          value={articleTitle}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) => setArticleTitle(event.target.value)}
-                          placeholder="Headline"
-                        />
-                      </label>
-                      <label>
-                        <span>Hotspot label</span>
-                        <input
-                          value={blockLabel}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) => {
-                            setBlockLabel(event.target.value);
-                            setArticleHotspotLabel(event.target.value);
-                          }}
-                        />
-                      </label>
+                    <div className="section-panel-heading">
+                      <strong>Section post</strong>
+                      <span>Page {selectedArticlePage.pageNumber}</span>
                     </div>
-                    <details className="section-panel-advanced">
-                      <summary>Rectangle &amp; advanced fields</summary>
-                      <div className="form-grid geometry-grid">
-                        <label>
-                          <span>X%</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.1"
-                            value={blockX}
-                            onChange={(event) =>
-                              updateBlockGeometry({ x: Number(event.target.value) })
+                    {selectedClipSavedPost && (
+                      <Link
+                        className="section-panel-edit-link"
+                        to={`${EDITION_STUDIO_PATH}/posts/${selectedClipSavedPost.id}`}
+                        onClick={() =>
+                          writeEditionStudioContext(
+                            publisherPostStudioContext(selectedClipSavedPost),
+                          )
+                        }
+                      >
+                        <Pencil size={14} />
+                        Edit post
+                      </Link>
+                    )}
+                  </div>
+                  {selectedClipSavedPost ? (
+                    <div className="section-panel-status published">
+                      <span>Published</span>
+                      <strong>{selectedClipSavedPost.title}</strong>
+                    </div>
+                  ) : selectedBlock ? (
+                    <div className="section-panel-status draft">
+                      <span>Draft clip</span>
+                      <strong>{blockLabel || "Unsaved clip"}</strong>
+                    </div>
+                  ) : (
+                    <div className="section-panel-status new">
+                      <span>New clip</span>
+                      <strong>Draw a region, then save and publish</strong>
+                    </div>
+                  )}
+                  <form
+                    className="article-block-form compact section-panel-form"
+                    onSubmit={handleArticleBlockSubmit}
+                  >
+                    <div className="section-panel-body">
+                      {(draftClipPreviewUrl ||
+                        selectedClipSavedPost?.clippedImageUrl ||
+                        selectedBlock?.clippedImageUrl) && (
+                        <figure className="saved-clip-preview">
+                          <img
+                            key={
+                              draftClipPreviewUrl ||
+                              selectedClipSavedPost?.clippedImageUrl ||
+                              selectedBlock?.clippedImageUrl
                             }
+                            src={
+                              draftClipPreviewUrl ||
+                              selectedClipSavedPost?.clippedImageUrl ||
+                              selectedBlock?.clippedImageUrl
+                            }
+                            alt={articleTitle || blockLabel || "Selected clip"}
+                          />
+                          <figcaption>
+                            {clipExtractStatus === "loading"
+                              ? "Analyzing clip..."
+                              : selectedClipSavedPost
+                                ? "Published clip image"
+                                : draftClipPreviewUrl
+                                  ? "Drawn clip preview"
+                                  : "Saved clipping"}
+                          </figcaption>
+                        </figure>
+                      )}
+                      {clipExtractStatus === "loading" && (
+                        <p className="clip-extract-status loading">Extracting clip details...</p>
+                      )}
+                      <div className="form-grid">
+                        <label>
+                          <span>Type</span>
+                          <select
+                            value={blockType}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) =>
+                              setBlockType(event.target.value as ArticleBlockType)
+                            }
+                          >
+                            {blockTypes.map((type) => (
+                              <option key={type} value={type}>
+                                {formatRole(type)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Section</span>
+                          <input
+                            value={articleSection}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleSection(event.target.value)}
                           />
                         </label>
                         <label>
-                          <span>Y%</span>
+                          <span>Title</span>
                           <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.1"
-                            value={blockY}
-                            onChange={(event) =>
-                              updateBlockGeometry({ y: Number(event.target.value) })
-                            }
+                            value={articleTitle}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleTitle(event.target.value)}
+                            placeholder="Headline"
                           />
                         </label>
                         <label>
-                          <span>Width%</span>
+                          <span>Hotspot label</span>
                           <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            step="0.1"
-                            value={blockWidth}
-                            onChange={(event) =>
-                              updateBlockGeometry({ width: Number(event.target.value) })
-                            }
+                            value={blockLabel}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => {
+                              setBlockLabel(event.target.value);
+                              setArticleHotspotLabel(event.target.value);
+                            }}
                           />
                         </label>
                         <label>
-                          <span>Height%</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            step="0.1"
-                            value={blockHeight}
-                            onChange={(event) =>
-                              updateBlockGeometry({ height: Number(event.target.value) })
-                            }
+                          <span>Editor</span>
+                          <select
+                            value={articleEditorId}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => {
+                              const editorId = event.target.value;
+                              const editor = publisherEditorProfiles.find(
+                                (entry) => entry.id === editorId,
+                              );
+                              setArticleEditorId(editorId);
+                              setArticleAuthorName(editor?.name ?? "Publisher Desk");
+                            }}
+                          >
+                            <option value="">Publisher Desk</option>
+                            {publisherEditorProfiles.map((editor) => (
+                              <option key={editor.id} value={editor.id}>
+                                {editor.name} — {formatRole(editor.role)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {publisherEditorProfiles.length === 0 && (
+                          <p className="clip-locale-hint">
+                            No editors found for this publisher yet. Invite team members below.
+                          </p>
+                        )}
+                        <label className="studio-field-wide">
+                          <span>Summary</span>
+                          <textarea
+                            value={articleSummary}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleSummary(event.target.value)}
+                            rows={3}
+                          />
+                        </label>
+                        <label className="studio-field-wide">
+                          <span>Body</span>
+                          <textarea
+                            value={articleBody}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleBody(event.target.value)}
+                            rows={4}
                           />
                         </label>
                       </div>
-                      {(previewEdition?.city || previewEdition?.state) && (
-                        <p className="clip-locale-hint">
-                          Edition locale:{" "}
-                          {[previewEdition.city, previewEdition.state].filter(Boolean).join(", ")}
+                      <details
+                        className="section-panel-advanced"
+                        open={Boolean(selectedClipSavedPost)}
+                      >
+                        <summary>Clip rectangle, image &amp; access</summary>
+                        <div className="form-grid geometry-grid">
+                          <label>
+                            <span>X%</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={blockX}
+                              onChange={(event) =>
+                                updateBlockGeometry({ x: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Y%</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={blockY}
+                              onChange={(event) =>
+                                updateBlockGeometry({ y: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Width%</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              step="0.1"
+                              value={blockWidth}
+                              onChange={(event) =>
+                                updateBlockGeometry({ width: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            <span>Height%</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              step="0.1"
+                              value={blockHeight}
+                              onChange={(event) =>
+                                updateBlockGeometry({ height: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                        </div>
+                        {(previewEdition?.city || previewEdition?.state) && (
+                          <p className="clip-locale-hint">
+                            Edition locale:{" "}
+                            {[previewEdition.city, previewEdition.state]
+                              .filter(Boolean)
+                              .join(", ")}
+                          </p>
+                        )}
+                        {selectedClipSavedPost && (
+                          <div className="section-panel-image-upload">
+                            <label>
+                              <span>Replace clip image</span>
+                              <input
+                                ref={sectionClipImageInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                disabled={sectionClipImageStatus === "uploading"}
+                                onChange={handleSectionClipImageFileChange}
+                              />
+                            </label>
+                            {sectionClipImageFile && (
+                              <p className="clip-image-file-name">
+                                Selected: {sectionClipImageFile.name}
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              className="secondary-action"
+                              disabled={
+                                !sectionClipImageFile || sectionClipImageStatus === "uploading"
+                              }
+                              onClick={() => void handleSectionClipImageUpload()}
+                            >
+                              <FileUp size={15} />
+                              {sectionClipImageStatus === "uploading"
+                                ? "Uploading..."
+                                : "Upload image"}
+                            </button>
+                            {sectionClipImageMessage && (
+                              <p className={`action-feedback ${sectionClipImageStatus}`}>
+                                {sectionClipImageMessage}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        <label>
+                          <span>Area</span>
+                          <input
+                            value={articleArea}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleArea(event.target.value)}
+                            placeholder="Locality mentioned in the clip"
+                          />
+                        </label>
+                        <label>
+                          <span>Tags</span>
+                          <input
+                            value={articleTagsInput}
+                            disabled={clipExtractStatus === "loading"}
+                            onChange={(event) => setArticleTagsInput(event.target.value)}
+                            placeholder="Comma-separated tags"
+                          />
+                        </label>
+                        <label>
+                          <span>Access</span>
+                          <select
+                            value={articleAccessRule}
+                            onChange={(event) =>
+                              setArticleAccessRule(event.target.value as AccessRule)
+                            }
+                          >
+                            <option value="public">Public</option>
+                            <option value="subscriber_only">Subscriber only</option>
+                            <option value="staff_only">Staff only</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Discussion</span>
+                          <select
+                            value={articleDiscussionRule}
+                            onChange={(event) =>
+                              setArticleDiscussionRule(event.target.value as DiscussionRule)
+                            }
+                          >
+                            <option value="logged_in">Logged-in readers</option>
+                            <option value="subscriber_only">Subscribers only</option>
+                            <option value="disabled">Disabled</option>
+                            <option value="locked">Locked</option>
+                          </select>
+                        </label>
+                      </details>
+                      {blockMessage && (
+                        <p className={`action-feedback ${blockSaveStatus}`}>{blockMessage}</p>
+                      )}
+                      {articleCreateMessage && (
+                        <p className={`action-feedback ${articleCreateStatus}`}>
+                          {articleCreateMessage}
                         </p>
                       )}
-                      <label>
-                        <span>Area</span>
-                        <input
-                          value={articleArea}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) => setArticleArea(event.target.value)}
-                          placeholder="Locality mentioned in the clip"
-                        />
-                      </label>
-                      <label>
-                        <span>Tags</span>
-                        <input
-                          value={articleTagsInput}
-                          disabled={clipExtractStatus === "loading"}
-                          onChange={(event) => setArticleTagsInput(event.target.value)}
-                          placeholder="Comma-separated tags"
-                        />
-                      </label>
-                      <label>
-                        <span>Summary</span>
-                        <textarea
-                          value={articleSummary}
-                          onChange={(event) => setArticleSummary(event.target.value)}
-                          rows={3}
-                        />
-                      </label>
-                      <label>
-                        <span>Body</span>
-                        <textarea
-                          value={articleBody}
-                          onChange={(event) => setArticleBody(event.target.value)}
-                          rows={4}
-                        />
-                      </label>
-                      <label>
-                        <span>Author</span>
-                        <input
-                          value={articleAuthorName}
-                          onChange={(event) => setArticleAuthorName(event.target.value)}
-                        />
-                      </label>
-                      <label>
-                        <span>Access</span>
-                        <select
-                          value={articleAccessRule}
-                          onChange={(event) =>
-                            setArticleAccessRule(event.target.value as AccessRule)
-                          }
-                        >
-                          <option value="public">Public</option>
-                          <option value="subscriber_only">Subscriber only</option>
-                          <option value="staff_only">Staff only</option>
-                        </select>
-                      </label>
-                      <label>
-                        <span>Discussion</span>
-                        <select
-                          value={articleDiscussionRule}
-                          onChange={(event) =>
-                            setArticleDiscussionRule(event.target.value as DiscussionRule)
-                          }
-                        >
-                          <option value="logged_in">Logged-in readers</option>
-                          <option value="subscriber_only">Subscribers only</option>
-                          <option value="disabled">Disabled</option>
-                          <option value="locked">Locked</option>
-                        </select>
-                      </label>
-                    </details>
-                    <div className="section-panel-actions">
-                      {selectedBlock && (
+                    </div>
+                    <div className="section-panel-footer">
+                      <div className="section-panel-actions">
                         <button
                           type="button"
-                          className="danger-action"
-                          disabled={blockSaveStatus === "saving"}
-                          onClick={() => void handleDeleteBlock(selectedBlock)}
+                          disabled={
+                            blockSaveStatus === "saving" ||
+                            clipExtractStatus === "loading" ||
+                            awaitingClipDraw ||
+                            !hasDraftClipGeometry
+                          }
+                          onClick={handleSaveBlockDraft}
                         >
-                          Delete clip
+                          {blockSaveStatus === "saving" ? "Saving..." : "Save clip"}
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={
-                          blockSaveStatus === "saving" ||
-                          clipExtractStatus === "loading" ||
-                          awaitingClipDraw ||
-                          !hasDraftClipGeometry
-                        }
-                        onClick={handleSaveBlockDraft}
-                      >
-                        {blockSaveStatus === "saving" ? "Saving..." : "Save clip"}
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={
-                          articleCreateStatus === "saving" || clipExtractStatus === "loading"
-                        }
-                      >
-                        {articleCreateStatus === "saving"
-                          ? selectedClipSavedPost
-                            ? "Updating..."
-                            : "Publishing..."
-                          : selectedClipSavedPost
-                            ? "Update post"
-                            : "Create post"}
-                      </button>
-                      {selectedClipSavedPost && (
                         <button
-                          type="button"
-                          className="secondary-action"
+                          type="submit"
                           disabled={
                             articleCreateStatus === "saving" || clipExtractStatus === "loading"
                           }
-                          onClick={() => void handleRefreshClipImage()}
                         >
-                          Refresh clip image
+                          {articleCreateStatus === "saving"
+                            ? selectedClipSavedPost
+                              ? "Updating..."
+                              : "Publishing..."
+                            : selectedClipSavedPost
+                              ? "Update post"
+                              : "Create post"}
                         </button>
-                      )}
-                      <p className="section-panel-help">
-                        <strong>Save clip</strong> stores the rectangle and editor fields on this
-                        page. <strong>Create post</strong> publishes the reader story, saves the
-                        cropped image, and adds a page hotspot.
-                      </p>
-                      <button
-                        type="button"
-                        className="secondary-action"
-                        onClick={resetCurrentSectionForm}
-                      >
-                        Reset form
-                      </button>
-                      {selectedBlock && selectedBlock.status !== "published" && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleBlockDecision(
-                              selectedBlock,
-                              selectedBlock.status === "rejected" ? "accepted" : "rejected",
-                            )
-                          }
-                        >
-                          {selectedBlock.status === "rejected" ? "Accept" : "Reject"}
-                        </button>
-                      )}
-                    </div>
-                    {blockMessage && (
-                      <p className={`action-feedback ${blockSaveStatus}`}>{blockMessage}</p>
-                    )}
-                    {articleCreateMessage && (
-                      <p className={`action-feedback ${articleCreateStatus}`}>
-                        {articleCreateMessage}
-                      </p>
-                    )}
-                  </form>
-                  {selectedBlock && !awaitingClipDraw && (
-                    <div className="created-post-strip compact selected-clip-post">
-                      <strong>Published post for this clip</strong>
-                      {selectedClipSavedPost ? (
-                        <>
-                          <article>
-                            <span>{selectedClipSavedPost.title}</span>
-                            <small>
-                              Page {selectedClipSavedPost.pageNumber} •{" "}
-                              {formatRole(selectedClipSavedPost.status)}
-                            </small>
-                          </article>
-                          <div className="published-post-links">
-                            <a
-                              className="text-link-btn"
-                              href={articlePreviewFromEditionStudioHref(selectedClipSavedPost.id)}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={() =>
-                                writeEditionStudioContext(
-                                  publisherPostStudioContext(selectedClipSavedPost),
-                                )
+                        {selectedClipSavedPost && (
+                          <>
+                            <button
+                              type="button"
+                              className="secondary-action"
+                              disabled={
+                                articleCreateStatus === "saving" ||
+                                clipExtractStatus === "loading"
                               }
+                              onClick={() => void handleRefreshClipImage()}
                             >
-                              <ExternalLink size={15} />
-                              Preview as reader
-                            </a>
+                              Refresh crop
+                            </button>
                             <Link
-                              className="text-link-btn"
+                              className="secondary-action section-panel-footer-link"
                               to={`${EDITION_STUDIO_PATH}/posts/${selectedClipSavedPost.id}`}
                               onClick={() =>
                                 writeEditionStudioContext(
@@ -6169,23 +6949,49 @@ function AdminView({
                                 )
                               }
                             >
-                              View &amp; edit post
+                              <Pencil size={15} />
+                              Full editor
                             </Link>
-                          </div>
-                          <p className="clip-post-empty">
-                            Edit fields above, then use Update post. Change the rectangle or
-                            choose Refresh clip image to regenerate the crop.
-                          </p>
-                        </>
-                      ) : (
-                        <p className="clip-post-empty">
-                          {selectedBlock.clippedImageUrl
-                            ? "Clip image is saved. Use Create post to publish this story."
-                            : "No post for this clip yet. Save clip, then create post."}
-                        </p>
-                      )}
+                          </>
+                        )}
+                        {selectedBlock && (
+                          <button
+                            type="button"
+                            className="danger-action"
+                            disabled={blockSaveStatus === "saving"}
+                            onClick={() => void handleDeleteBlock(selectedBlock)}
+                          >
+                            Delete clip
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          onClick={resetCurrentSectionForm}
+                        >
+                          Reset
+                        </button>
+                        {selectedBlock && selectedBlock.status !== "published" && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleBlockDecision(
+                                selectedBlock,
+                                selectedBlock.status === "rejected" ? "accepted" : "rejected",
+                              )
+                            }
+                          >
+                            {selectedBlock.status === "rejected" ? "Accept" : "Reject"}
+                          </button>
+                        )}
+                      </div>
+                      <p className="section-panel-help">
+                        {selectedClipSavedPost
+                          ? "Edit the fields above, then Update post. Replace the image or adjust the rectangle in advanced fields."
+                          : "Save clip stores the rectangle and fields. Create post publishes the story and cropped image."}
+                      </p>
                     </div>
-                  )}
+                  </form>
                 </aside>
               )}
             </div>
@@ -6228,6 +7034,155 @@ function AdminView({
             </div>
           )}
         </section>
+
+        {!canManagePlatform(profile) && (
+          <section className="workspace-panel" id="team-management">
+            <div className="section-heading compact">
+              <span className="eyebrow">Team management</span>
+              <h2>Invite and manage editors</h2>
+            </div>
+            <form className="edition-form" onSubmit={handleInviteSubmit}>
+              <div className="form-grid">
+                <label>
+                  <span>Publisher</span>
+                  <select
+                    value={selectedInvitePublisherId}
+                    onChange={(event) => setInvitePublisherId(event.target.value)}
+                  >
+                    {accessiblePublishers.map((publisher) => (
+                      <option key={publisher.id} value={publisher.id}>
+                        {publisher.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select
+                    value={inviteRole}
+                    onChange={(event) =>
+                      setInviteRole(event.target.value as PublisherStaffMembership["role"])
+                    }
+                  >
+                    {publisherInviteRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {formatRole(role)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={inviteName}
+                    onChange={(event) => setInviteName(event.target.value)}
+                    placeholder="Editor name"
+                  />
+                </label>
+                <label>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(event) => setInviteEmail(event.target.value)}
+                    placeholder="editor@example.com"
+                  />
+                </label>
+              </div>
+              <button disabled={inviteStatus === "saving"}>
+                <Users size={18} />
+                {inviteStatus === "saving" ? "Saving invite..." : "Invite team member"}
+              </button>
+              {inviteMessage && (
+                <p className={`action-feedback ${inviteStatus}`}>{inviteMessage}</p>
+              )}
+            </form>
+            <div className="access-directory">
+              <div>
+                <h3>Your team</h3>
+                {staffActionMessage && (
+                  <p className="action-feedback success">{staffActionMessage}</p>
+                )}
+                {staffDirectory.filter(
+                  (member) =>
+                    member.publisherId === selectedDraftPublisherId &&
+                    (publisherInviteRoles as string[]).includes(member.role),
+                ).length === 0 ? (
+                  <p className="empty-state">
+                    No editors assigned yet. Use the invite form above.
+                  </p>
+                ) : (
+                  staffDirectory
+                    .filter(
+                      (member) =>
+                        member.publisherId === selectedDraftPublisherId &&
+                        (publisherInviteRoles as string[]).includes(member.role),
+                    )
+                    .map((member) => (
+                      <article className="staff-card" key={member.id}>
+                        <div>
+                          <strong>{formatRole(member.role)}</strong>
+                          <span>
+                            {member.displayName}
+                            {member.displayEmail ? ` • ${member.displayEmail}` : ""}
+                          </span>
+                        </div>
+                        <div className="staff-actions">
+                          <small>{member.status}</small>
+                          {member.status === "active" ? (
+                            <button
+                              type="button"
+                              onClick={() => handleStaffStatusChange(member, "suspended")}
+                            >
+                              Suspend
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleStaffStatusChange(member, "active")}
+                            >
+                              Restore
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    ))
+                )}
+              </div>
+              <div>
+                <h3>Pending invites</h3>
+                {pendingInvites.filter(
+                  (invite) =>
+                    invite.publisherId === selectedDraftPublisherId &&
+                    (publisherInviteRoles as string[]).includes(invite.role),
+                ).length === 0 ? (
+                  <p className="empty-state">No pending invites for this publisher.</p>
+                ) : (
+                  pendingInvites
+                    .filter(
+                      (invite) =>
+                        invite.publisherId === selectedDraftPublisherId &&
+                        (publisherInviteRoles as string[]).includes(invite.role),
+                    )
+                    .map((invite) => (
+                      <article className="staff-card invite-card" key={invite.id}>
+                        <div>
+                          <strong>{invite.name}</strong>
+                          <span>
+                            {invite.email} • {formatRole(invite.role)}
+                          </span>
+                          <small className="invite-status-note">
+                            Waiting for platform admin to activate access.
+                          </small>
+                        </div>
+                        <small>{invite.status}</small>
+                      </article>
+                    ))
+                )}
+              </div>
+            </div>
+          </section>
+        )}
 
         {canManagePlatform(profile) && (
           <section className="workspace-panel">
@@ -6526,6 +7481,193 @@ function Insight({ icon, title, text }: InsightProps) {
         <p>{text}</p>
       </div>
     </article>
+  );
+}
+
+interface EditorProfileRouteProps {
+  articles: ArticlePost[];
+  publishers: Publisher[];
+  authUser: import("firebase/auth").User | null;
+  profile: UserProfile | null;
+}
+
+function EditorProfileRoute({
+  articles,
+  publishers,
+  authUser,
+  profile: _profile,
+}: EditorProfileRouteProps) {
+  const { editorId } = useParams<{ editorId: string }>();
+  const navigate = useNavigate();
+  const [editorProfile, setEditorProfile] = useState<EditorProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [following, setFollowing] = useState(false);
+  const [followPending, setFollowPending] = useState(false);
+  const [followFeedback, setFollowFeedback] = useState("");
+
+  const editorArticles = useMemo(
+    () =>
+      articles.filter(
+        (a) => a.editorId === editorId && a.status === "published",
+      ),
+    [articles, editorId],
+  );
+  const publisher = publishers.find((p) => p.id === editorProfile?.publisherId);
+
+  useEffect(() => {
+    if (!editorId) return;
+
+    setLoading(true);
+    getEditorProfile(editorId)
+      .then((ep) => {
+        setEditorProfile(ep);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [editorId]);
+
+  useEffect(() => {
+    if (!authUser || !editorId) return;
+
+    getEditorFollowStatus(authUser.uid, editorId).then(setFollowing).catch(() => null);
+  }, [authUser?.uid, editorId]);
+
+  async function handleFollowToggle() {
+    if (!authUser) {
+      setFollowFeedback("Sign in to follow this editor.");
+      return;
+    }
+
+    setFollowPending(true);
+    setFollowFeedback("");
+
+    try {
+      const nowFollowing = await toggleEditorFollow(
+        authUser,
+        editorId!,
+        editorProfile?.publisherId ?? "",
+        following,
+      );
+      setFollowing(nowFollowing);
+      setEditorProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              followers: Math.max(0, prev.followers + (nowFollowing ? 1 : -1)),
+            }
+          : prev,
+      );
+    } catch {
+      setFollowFeedback("Unable to update follow status. Try again.");
+    } finally {
+      setFollowPending(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <section className="article-layout">
+        <p className="empty-state">Loading editor profile…</p>
+      </section>
+    );
+  }
+
+  if (!editorProfile) {
+    return (
+      <section className="article-layout">
+        <p className="empty-state">Editor profile not found.</p>
+        <button type="button" onClick={() => navigate("/")}>
+          Back to home
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="article-layout">
+      <div className="article-nav">
+        <button type="button" onClick={() => navigate(-1 as never)}>
+          <ArrowLeft size={16} />
+          Back
+        </button>
+      </div>
+
+      <section className="workspace-panel publisher-context-panel editor-profile-panel">
+        <div className="byline-card">
+          <div className="avatar avatar-lg">{editorProfile.name.slice(0, 1)}</div>
+          <div>
+            <strong>{editorProfile.name}</strong>
+            <span>
+              {formatRole(editorProfile.role)} •{" "}
+              {publisher?.name ?? editorProfile.publisherId}
+            </span>
+            <span>{editorProfile.followers.toLocaleString()} followers</span>
+          </div>
+          {authUser && authUser.uid !== editorProfile.userId && (
+            <button
+              type="button"
+              onClick={handleFollowToggle}
+              disabled={followPending}
+            >
+              <Bell size={18} />
+              {followPending ? "…" : following ? "Following" : "Follow"}
+            </button>
+          )}
+        </div>
+
+        {editorProfile.bio && (
+          <p className="editor-bio">{editorProfile.bio}</p>
+        )}
+
+        {editorProfile.topics.length > 0 && (
+          <div className="topic-row">
+            {editorProfile.topics.map((topic) => (
+              <span key={topic} className="topic-chip">
+                {topic}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {followFeedback && (
+          <p className="action-feedback error">{followFeedback}</p>
+        )}
+      </section>
+
+      <section className="workspace-panel strategy-panel">
+        <div className="section-heading compact">
+          <span className="eyebrow">Published work</span>
+          <h2>Articles by {editorProfile.name}</h2>
+        </div>
+
+        {editorArticles.length === 0 ? (
+          <p className="empty-state">
+            No published articles linked to this editor yet.
+          </p>
+        ) : (
+          <div className="article-admin-table">
+            {editorArticles.map((article) => (
+              <article key={article.id}>
+                {article.clippedImageUrl && (
+                  <img src={article.clippedImageUrl} alt={article.title} />
+                )}
+                <div>
+                  <strong>{article.title}</strong>
+                  <span>
+                    {article.section} • Page {article.pageNumber}
+                  </span>
+                </div>
+                <small>
+                  {article.stats.views.toLocaleString()} views •{" "}
+                  {(article.stats.likes ?? 0).toLocaleString()} likes
+                </small>
+                <Link to={`/article/${article.id}`}>Read</Link>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </section>
   );
 }
 

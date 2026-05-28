@@ -11,7 +11,9 @@
     "functions:build": "npm --prefix functions run build",
     "grant:access": "tsx scripts/grantPublisherAccess.ts",
     "seed:firestore": "tsx scripts/seedFirestore.ts",
-    "seed:test-access": "tsx scripts/seedTestAccess.ts"
+    "seed:test-access": "tsx scripts/seedTestAccess.ts",
+    "seed:editor-assignments": "tsx scripts/seedEditorAssignments.ts",
+    "clean:firestore": "tsx scripts/cleanFirestore.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",

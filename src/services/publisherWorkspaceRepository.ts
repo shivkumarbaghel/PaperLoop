@@ -122,6 +122,7 @@ export interface ArticleBlockInput {
   area?: string;
   tags?: string[];
   authorName: string;
+  editorId?: string;
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
   hotspotLabel: string;
@@ -142,6 +143,7 @@ export interface ArticlePostUpdateInput {
   area?: string;
   tags?: string[];
   authorName: string;
+  editorId?: string;
   accessRule: AccessRule;
   discussionRule: DiscussionRule;
   hotspotLabel: string;
@@ -170,6 +172,8 @@ export interface ArticleBlockDraftInput {
   state?: string;
   area?: string;
   tags?: string[];
+  editorId?: string;
+  authorName?: string;
   x: number;
   y: number;
   width: number;
@@ -721,7 +725,7 @@ export async function createDraftClipPreviewUrl(
     );
     imageBitmap.close();
 
-    const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.9);
+    const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.95);
 
     return URL.createObjectURL(clippedBlob);
   } catch {
@@ -761,6 +765,8 @@ export async function saveArticleBlockDraft(
     summary: (input.summary ?? "").trim(),
     body: (input.body ?? "").trim(),
     ...locale,
+    editorId: input.editorId || undefined,
+    authorName: input.authorName?.trim() || undefined,
     ...normalizeGeometry({
       x: input.x,
       y: input.y,
@@ -775,6 +781,8 @@ export async function saveArticleBlockDraft(
     blockRef,
     {
       ...block,
+      editorId: input.editorId || null,
+      authorName: input.authorName?.trim() || null,
       updatedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
     },
@@ -1091,8 +1099,9 @@ export async function createArticleBlockFromPreviewPage(
     title: input.title.trim(),
     section: input.section.trim(),
     ...locale,
+    ...(input.editorId ? { editorId: input.editorId } : {}),
     author: {
-      id: slugify(input.authorName),
+      id: input.editorId ?? slugify(input.authorName),
       name: input.authorName.trim(),
       publication: edition.title,
       topics: locale.tags.length ? locale.tags : [input.section.trim()],
@@ -1141,6 +1150,8 @@ export async function createArticleBlockFromPreviewPage(
           state: locale.state,
           area: locale.area,
           tags: locale.tags,
+          ...(input.editorId ? { editorId: input.editorId } : {}),
+          ...(input.authorName?.trim() ? { authorName: input.authorName.trim() } : {}),
           status: "published",
           updatedAt: serverTimestamp(),
         })
@@ -1268,8 +1279,12 @@ export async function updatePublisherArticlePost(
     blockGeometry,
     accessRule: input.accessRule,
     discussionRule: input.discussionRule,
+    ...(input.editorId !== undefined
+      ? { editorId: input.editorId || undefined }
+      : {}),
     author: {
       ...existingArticle.author,
+      id: input.editorId ?? existingArticle.author.id,
       name: input.authorName.trim() || existingArticle.author.name,
       topics: locale.tags.length ? locale.tags : [input.section.trim()],
     },
@@ -1286,6 +1301,12 @@ export async function updatePublisherArticlePost(
           state: locale.state,
           area: locale.area,
           tags: locale.tags,
+      ...(input.editorId !== undefined
+        ? { editorId: input.editorId || null }
+        : {}),
+          ...(input.authorName?.trim()
+            ? { authorName: input.authorName.trim() }
+            : {}),
           ...blockGeometry,
           clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
           clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
@@ -1310,6 +1331,9 @@ export async function updatePublisherArticlePost(
       accessRule: updatedArticle.accessRule,
       discussionRule: updatedArticle.discussionRule,
       author: updatedArticle.author,
+      ...(input.editorId !== undefined
+        ? { editorId: input.editorId || null }
+        : {}),
       updatedAt: serverTimestamp(),
       updatedBy: user.uid,
     }),
@@ -1399,9 +1423,10 @@ export async function uploadPublisherClipImage(
     `${safeFileName(input.articleId)}.webp`,
   ].join("/");
   const clippedRef = ref(firebase.storage, clippedPath);
+  const clippedBlob = await prepareReplacementClipBlob(input.imageFile);
 
-  await uploadBytes(clippedRef, input.imageFile, {
-    contentType: input.imageFile.type,
+  await uploadBytes(clippedRef, clippedBlob, {
+    contentType: "image/webp",
     customMetadata: {
       publisherId: input.publisherId,
       editionId: edition.id,
@@ -1411,7 +1436,7 @@ export async function uploadPublisherClipImage(
     },
   });
 
-  const clippedImageUrl = await getDownloadURL(clippedRef);
+  const clippedImageUrl = cacheBustedStorageUrl(await getDownloadURL(clippedRef));
   const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
   const existingHotspot = page.hotspots.find(
     (hotspot) => hotspot.articleId === existingArticle.id,
@@ -1549,7 +1574,7 @@ async function createClippedArticleImage({
   );
   imageBitmap.close();
 
-  const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.9);
+  const clippedBlob = await canvasToBlob(canvas, "image/webp", 0.95);
   const clippedPath = [
     "publishers",
     edition.publisherId,
@@ -1572,7 +1597,7 @@ async function createClippedArticleImage({
 
   return {
     path: clippedPath,
-    url: await getDownloadURL(clippedRef),
+    url: cacheBustedStorageUrl(await getDownloadURL(clippedRef)),
   };
 }
 
@@ -1656,6 +1681,34 @@ function canvasToBlob(
       quality,
     );
   });
+}
+
+function cacheBustedStorageUrl(url: string, version = Date.now()) {
+  const parsed = new URL(url);
+  parsed.searchParams.set("v", String(version));
+  return parsed.toString();
+}
+
+async function prepareReplacementClipBlob(imageFile: File): Promise<Blob> {
+  if (imageFile.type === "image/webp") {
+    return imageFile;
+  }
+
+  const imageBitmap = await createImageBitmap(imageFile);
+  const canvas = document.createElement("canvas");
+  canvas.width = imageBitmap.width;
+  canvas.height = imageBitmap.height;
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    imageBitmap.close();
+    throw new Error("Unable to prepare the replacement clip image.");
+  }
+
+  context.drawImage(imageBitmap, 0, 0);
+  imageBitmap.close();
+
+  return canvasToBlob(canvas, "image/webp", 0.95);
 }
 
 function validateBlockInput(input: ArticleBlockDraftInput) {

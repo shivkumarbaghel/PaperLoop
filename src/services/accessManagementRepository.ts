@@ -2,6 +2,7 @@ import type { User } from "firebase/auth";
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   serverTimestamp,
@@ -12,7 +13,9 @@ import {
 import { getFirebaseServices } from "../firebase";
 import type {
   PublisherStaffInvite,
+  PublisherStaffMemberSummary,
   PublisherStaffMembership,
+  UserProfile,
 } from "../types";
 
 export interface PublisherInviteInput {
@@ -65,7 +68,7 @@ export async function createPublisherStaffInvite(
 
 export async function getPublisherStaffDirectory(
   publisherIds: string[],
-): Promise<PublisherStaffMembership[]> {
+): Promise<PublisherStaffMemberSummary[]> {
   const firebase = getFirebaseServices();
 
   if (!firebase || publisherIds.length === 0) {
@@ -83,12 +86,34 @@ export async function getPublisherStaffDirectory(
     ),
   );
 
-  return snapshots.flatMap((snapshot) =>
+  const memberships = snapshots.flatMap((snapshot) =>
     snapshot.docs.map((documentSnapshot) => ({
       id: documentSnapshot.id,
       ...documentSnapshot.data(),
     })) as PublisherStaffMembership[],
   );
+
+  const uniqueUserIds = [...new Set(memberships.map((membership) => membership.userId))];
+  const userProfiles = await Promise.all(
+    uniqueUserIds.map((userId) => getDoc(doc(firebase.db, "users", userId))),
+  );
+  const usersById = new Map<string, UserProfile>(
+    userProfiles.flatMap((snapshot) =>
+      snapshot.exists()
+        ? [[snapshot.id, { id: snapshot.id, ...snapshot.data() } as UserProfile]]
+        : [],
+    ),
+  );
+
+  return memberships.map((membership) => {
+    const userProfile = usersById.get(membership.userId);
+
+    return {
+      ...membership,
+      displayName: userProfile?.name?.trim() || membership.userId,
+      displayEmail: userProfile?.email ?? null,
+    };
+  });
 }
 
 export async function getPublisherStaffInvites(

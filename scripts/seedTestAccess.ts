@@ -15,6 +15,8 @@ interface TestAccessAccount {
   role: UserRole;
   publisherId?: string;
   staffRole?: StaffRole;
+  bio?: string;
+  topics?: string[];
 }
 
 const testPassword = process.env.PAPERLOOP_TEST_PASSWORD ?? "abc123";
@@ -32,6 +34,44 @@ const testAccounts: TestAccessAccount[] = [
   publisherAccount("prabhatkhabar", "Prabhat Khabar", "prabhatkhabar"),
   publisherAccount("jagran", "Dainik Jagran", "jagran"),
   publisherAccount("navodayatimes", "Navodaya Times", "navodayatimes"),
+  editorAccount("aajtak.editor", "Aaj Tak", "aajtak"),
+  editorAccount("livehindustan.editor", "Live Hindustan", "livehindustan"),
+  editorAccount("amarujala.editor", "Amar Ujala", "amarujala"),
+  editorAccount("prabhatkhabar.editor", "Prabhat Khabar", "prabhatkhabar"),
+  editorAccount("jagran.editor", "Dainik Jagran", "jagran"),
+  editorAccount("navodayatimes.editor", "Navodaya Times", "navodayatimes"),
+  namedStaffAccount(
+    "navodayatimes.rajesh",
+    "Rajesh Kumar",
+    "navodayatimes",
+    "editor",
+    "Rajesh Kumar is a senior editor at Navodaya Times covering crime, politics, and governance across Delhi NCR.",
+    ["Crime", "Politics", "Governance", "Delhi NCR"],
+  ),
+  namedStaffAccount(
+    "navodayatimes.priya",
+    "Priya Sharma",
+    "navodayatimes",
+    "editor",
+    "Priya Sharma leads the education and health desk at Navodaya Times, with a focus on community impact stories.",
+    ["Education", "Health", "Community", "City"],
+  ),
+  namedStaffAccount(
+    "navodayatimes.amit",
+    "Amit Verma",
+    "navodayatimes",
+    "columnist",
+    "Amit Verma writes opinion pieces on urban development, policy, and social issues for Navodaya Times.",
+    ["Opinion", "Urban Development", "Policy", "Social"],
+  ),
+  namedStaffAccount(
+    "navodayatimes.sunita",
+    "Sunita Gupta",
+    "navodayatimes",
+    "moderator",
+    "Sunita Gupta moderates reader discussions and manages community engagement for Navodaya Times.",
+    ["Community", "Local"],
+  ),
 ];
 const legacyAdminEmails = ["neprotechltd@gmail.com"];
 
@@ -149,6 +189,31 @@ async function upsertTestAccount(account: TestAccessAccount) {
       },
       { merge: true },
     );
+
+    const isEditorialRole =
+      account.staffRole === "editor" ||
+      account.staffRole === "columnist" ||
+      account.staffRole === "moderator" ||
+      account.staffRole === "publisher_admin";
+
+    if (isEditorialRole) {
+      await db.collection("editorProfiles").doc(user.uid).set(
+        {
+          id: user.uid,
+          userId: user.uid,
+          publisherId: account.publisherId,
+          name: account.name,
+          bio: account.bio ?? `${account.name} covers news for ${account.publisherId}.`,
+          avatarUrl: null,
+          topics: account.topics ?? ["Local", "City"],
+          role: account.staffRole,
+          followers: 0,
+          status: "active",
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
   }
 }
 
@@ -216,6 +281,47 @@ function publisherAccount(
     role: "publisher_admin",
     publisherId,
     staffRole: "publisher_admin",
+  };
+}
+
+function editorAccount(
+  loginId: string,
+  publisherName: string,
+  publisherId: string,
+): TestAccessAccount {
+  return {
+    loginId,
+    email: `${loginId}@paperloop.test`,
+    password: testPassword,
+    name: `${publisherName} Editor`,
+    role: "editor",
+    publisherId,
+    staffRole: "editor",
+  };
+}
+
+function namedStaffAccount(
+  loginId: string,
+  name: string,
+  publisherId: string,
+  staffRole: StaffRole,
+  bio: string,
+  topics: string[],
+): TestAccessAccount {
+  const role: UserRole =
+    staffRole === "publisher_admin" || staffRole === "agency_admin"
+      ? staffRole
+      : (staffRole as UserRole);
+  return {
+    loginId,
+    email: `${loginId}@paperloop.test`,
+    password: testPassword,
+    name,
+    role,
+    publisherId,
+    staffRole,
+    bio,
+    topics,
   };
 }
 
