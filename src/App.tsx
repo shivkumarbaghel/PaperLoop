@@ -114,6 +114,12 @@ import type {
 } from "./types";
 
 type View = "dashboard" | "reader" | "article" | "admin";
+type BlockGeometry = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 const staffRoles: PublisherStaffMembership["role"][] = [
   "agency_admin",
@@ -1437,6 +1443,23 @@ function upsertBlock(blocks: ArticleBlock[], nextBlock: ArticleBlock) {
   return blocks.map((block) => (block.id === nextBlock.id ? nextBlock : block));
 }
 
+function normalizeBlockGeometry(geometry: BlockGeometry): BlockGeometry {
+  const x = Math.min(99, clampPercent(geometry.x));
+  const y = Math.min(99, clampPercent(geometry.y));
+  const width = Math.max(1, Math.min(clampPercent(geometry.width), 100 - x));
+  const height = Math.max(1, Math.min(clampPercent(geometry.height), 100 - y));
+
+  return { x, y, width, height };
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(value * 10) / 10));
+}
+
 function buildPublisherStats(
   publishers: Publisher[],
   editions: Edition[],
@@ -1622,16 +1645,21 @@ function AdminView({
     () => accessiblePublishers.map((publisher) => publisher.id),
     [accessiblePublishers],
   );
-  const reviewQueue = useMemo(
-    () =>
-      [...createdDrafts, ...workspaceEditions, ...editions.filter((edition) => edition.status !== "published")]
-        .filter(
-          (edition, index, editionList) =>
-            editionList.findIndex((item) => item.id === edition.id) === index,
-        )
-        .slice(0, 8),
-    [createdDrafts, editions, workspaceEditions],
-  );
+  const reviewQueue = useMemo(() => {
+    const latestEditions = new Map<string, Edition>();
+
+    [
+      ...editions.filter((edition) => edition.status !== "published"),
+      ...createdDrafts,
+      ...workspaceEditions,
+    ]
+      .filter((edition) => workspacePublisherIds.includes(edition.publisherId))
+      .forEach((edition) => latestEditions.set(edition.id, edition));
+
+    return Array.from(latestEditions.values())
+      .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
+      .slice(0, 8);
+  }, [createdDrafts, editions, workspaceEditions, workspacePublisherIds]);
   const previewEdition = useMemo(
     () => reviewQueue.find((edition) => edition.id === previewEditionId) ?? null,
     [previewEditionId, reviewQueue],
@@ -1651,6 +1679,21 @@ function AdminView({
     (selectedBlockId
       ? workspaceBlocks.find((block) => block.id === selectedBlockId)
       : null) ?? null;
+  const activeClipOverlay = selectedArticlePage
+    ? {
+        id: selectedBlock?.id ?? "manual-draft",
+        label: blockLabel,
+        x: blockX,
+        y: blockY,
+        width: blockWidth,
+        height: blockHeight,
+        isDraft: !selectedBlock,
+      }
+    : null;
+  const currentWorkflowEdition = previewEdition ?? reviewQueue[0] ?? null;
+  const currentWorkflowBlocks = currentWorkflowEdition
+    ? workspaceBlocks.filter((block) => block.editionId === currentWorkflowEdition.id)
+    : [];
   const publisherArticles = useMemo(
     () =>
       [
@@ -1662,6 +1705,9 @@ function AdminView({
       ].filter((article) => workspacePublisherIds.includes(article.publisherId)),
     [articles, createdArticles, workspacePublisherIds],
   );
+  const currentWorkflowPosts = currentWorkflowEdition
+    ? publisherArticles.filter((article) => article.editionId === currentWorkflowEdition.id)
+    : [];
   const workspaceCampaigns = useMemo(
     () => [
       ...createdCampaigns,
@@ -1699,6 +1745,13 @@ function AdminView({
         setWorkspaceEditions(nextEditions);
         setWorkspaceBlocks(nextBlocks);
         setWorkspaceComments(nextComments);
+        setCreatedDrafts((currentDrafts) =>
+          currentDrafts
+            .map((draft) =>
+              nextEditions.find((edition) => edition.id === draft.id) ?? draft,
+            )
+            .filter((draft) => draft.status !== "published"),
+        );
         setWorkspaceStatus("ready");
       })
       .catch(() => {
@@ -1716,6 +1769,22 @@ function AdminView({
       active = false;
     };
   }, [workspacePublisherIds, workspaceRefreshKey]);
+
+  useEffect(() => {
+    const hasProcessingEdition = reviewQueue.some(
+      (edition) => edition.status === "processing",
+    );
+
+    if (!hasProcessingEdition) {
+      return undefined;
+    }
+
+    const refreshTimer = window.setInterval(() => {
+      setWorkspaceRefreshKey((currentKey) => currentKey + 1);
+    }, 5000);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [reviewQueue]);
 
   useEffect(() => {
     let active = true;
@@ -2003,14 +2072,23 @@ function AdminView({
     setArticleSummary("");
     setArticleBody("");
     setArticleHotspotLabel("Manual block");
-    setBlockX(Math.min(84, Math.max(0, Math.round(x * 10) / 10)));
-    setBlockY(Math.min(84, Math.max(0, Math.round(y * 10) / 10)));
-    setBlockWidth(28);
-    setBlockHeight(16);
+    const geometry = normalizeBlockGeometry({
+      x: Math.min(84, Math.max(0, Math.round(x * 10) / 10)),
+      y: Math.min(84, Math.max(0, Math.round(y * 10) / 10)),
+      width: 28,
+      height: 16,
+    });
+
+    setBlockX(geometry.x);
+    setBlockY(geometry.y);
+    setBlockWidth(geometry.width);
+    setBlockHeight(geometry.height);
     setBlockMessage("Manual block started. Adjust details, then save draft.");
   }
 
   function handleSelectBlock(block: ArticleBlock) {
+    const geometry = normalizeBlockGeometry(block);
+
     setSelectedBlockId(block.id);
     setBlockType(block.type);
     setBlockStatus(block.status === "suggested" ? "accepted" : block.status);
@@ -2020,11 +2098,28 @@ function AdminView({
     setArticleSummary(block.summary);
     setArticleBody(block.body);
     setArticleHotspotLabel(block.label);
-    setBlockX(block.x);
-    setBlockY(block.y);
-    setBlockWidth(block.width);
-    setBlockHeight(block.height);
+    setBlockX(geometry.x);
+    setBlockY(geometry.y);
+    setBlockWidth(geometry.width);
+    setBlockHeight(geometry.height);
+    setArticleCreateStatus("idle");
+    setArticleCreateMessage("");
     setBlockMessage("");
+  }
+
+  function updateBlockGeometry(nextGeometry: Partial<BlockGeometry>) {
+    const geometry = normalizeBlockGeometry({
+      x: blockX,
+      y: blockY,
+      width: blockWidth,
+      height: blockHeight,
+      ...nextGeometry,
+    });
+
+    setBlockX(geometry.x);
+    setBlockY(geometry.y);
+    setBlockWidth(geometry.width);
+    setBlockHeight(geometry.height);
   }
 
   async function handleSaveBlockDraft() {
@@ -2173,15 +2268,18 @@ function AdminView({
     setArticleCreateMessage("");
 
     try {
+      const geometry = normalizeBlockGeometry({
+        x: blockX,
+        y: blockY,
+        width: blockWidth,
+        height: blockHeight,
+      });
       const result = await createArticleBlockFromPreviewPage(
         previewEdition,
         {
           pageId: selectedArticlePage.id,
           blockId: selectedBlock?.id,
-          x: blockX,
-          y: blockY,
-          width: blockWidth,
-          height: blockHeight,
+          ...geometry,
           title: articleTitle,
           section: articleSection,
           summary: articleSummary,
@@ -3068,10 +3166,12 @@ function AdminView({
                         </div>
                       )}
                       {!hideClips &&
-                        selectedPageBlocks.map((block) => (
+                        selectedPageBlocks
+                          .filter((block) => block.id !== selectedBlockId)
+                          .map((block) => (
                           <button
                             type="button"
-                            className={`clip-block ${block.id === selectedBlock?.id ? "active" : ""}`}
+                            className="clip-block"
                             key={block.id}
                             style={{
                               left: `${block.x}%`,
@@ -3087,18 +3187,19 @@ function AdminView({
                             <span>{block.label}</span>
                           </button>
                         ))}
-                      {!hideClips && !selectedBlockId && (
+                      {!hideClips && activeClipOverlay && (
                         <button
                           type="button"
-                          className="clip-block draft"
+                          className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
                           style={{
-                            left: `${blockX}%`,
-                            top: `${blockY}%`,
-                            width: `${blockWidth}%`,
-                            height: `${blockHeight}%`,
+                            left: `${activeClipOverlay.x}%`,
+                            top: `${activeClipOverlay.y}%`,
+                            width: `${activeClipOverlay.width}%`,
+                            height: `${activeClipOverlay.height}%`,
                           }}
+                          onClick={(event) => event.stopPropagation()}
                         >
-                          <span>{blockLabel}</span>
+                          <span>{activeClipOverlay.label}</span>
                         </button>
                       )}
                     </div>
@@ -3218,42 +3319,54 @@ function AdminView({
                   <label>
                     <span>X%</span>
                     <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={blockX}
-                      onChange={(event) => setBlockX(Number(event.target.value))}
-                    />
+	                      type="number"
+	                      min="0"
+	                      max="100"
+	                      step="0.1"
+	                      value={blockX}
+	                      onChange={(event) =>
+	                        updateBlockGeometry({ x: Number(event.target.value) })
+	                      }
+	                    />
                   </label>
                   <label>
                     <span>Y%</span>
                     <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={blockY}
-                      onChange={(event) => setBlockY(Number(event.target.value))}
-                    />
+	                      type="number"
+	                      min="0"
+	                      max="100"
+	                      step="0.1"
+	                      value={blockY}
+	                      onChange={(event) =>
+	                        updateBlockGeometry({ y: Number(event.target.value) })
+	                      }
+	                    />
                   </label>
                   <label>
                     <span>Width%</span>
                     <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={blockWidth}
-                      onChange={(event) => setBlockWidth(Number(event.target.value))}
-                    />
+	                      type="number"
+	                      min="1"
+	                      max="100"
+	                      step="0.1"
+	                      value={blockWidth}
+	                      onChange={(event) =>
+	                        updateBlockGeometry({ width: Number(event.target.value) })
+	                      }
+	                    />
                   </label>
                   <label>
                     <span>Height%</span>
                     <input
-                      type="number"
-                      min="1"
-                      max="100"
-                      value={blockHeight}
-                      onChange={(event) => setBlockHeight(Number(event.target.value))}
-                    />
+	                      type="number"
+	                      min="1"
+	                      max="100"
+	                      step="0.1"
+	                      value={blockHeight}
+	                      onChange={(event) =>
+	                        updateBlockGeometry({ height: Number(event.target.value) })
+	                      }
+	                    />
                   </label>
                 </div>
                 <label>
