@@ -20,6 +20,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CircleDollarSign,
+  Eye,
   FileUp,
   Filter,
   Flag,
@@ -114,8 +115,34 @@ import type {
   PublisherStaffMembership,
   UserProfile,
 } from "./types";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 
 type View = "dashboard" | "reader" | "article" | "admin";
+
+const EDITION_STUDIO_PATH = "/admin/edition-studio";
+
+function activeViewFromPath(pathname: string): View {
+  if (pathname.startsWith("/admin")) {
+    return "admin";
+  }
+
+  if (pathname.startsWith("/article")) {
+    return "article";
+  }
+
+  if (pathname.startsWith("/reader")) {
+    return "reader";
+  }
+
+  return "dashboard";
+}
 type BlockGeometry = {
   x: number;
   y: number;
@@ -139,7 +166,9 @@ const blockTypes: ArticleBlockType[] = [
 ];
 
 function App() {
-  const [activeView, setActiveView] = useState<View>("dashboard");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activeView = activeViewFromPath(location.pathname);
   const [selectedPublisherId, setSelectedPublisherId] = useState(
     mockContent.publishers[0].id,
   );
@@ -279,9 +308,6 @@ function App() {
     publisherEditions[0] ??
     createPlaceholderEdition(selectedPublisher);
 
-  const selectedArticle =
-    articles.find((article) => article.id === selectedArticleId) ?? articles[0];
-
   const filteredPublishers = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
@@ -310,11 +336,11 @@ function App() {
 
     setSelectedPublisherId(publisher.id);
     setSelectedEditionId(nextEdition?.id ?? "");
-    setActiveView("reader");
     setPageIndex(0);
+    navigate("/reader");
   }
 
-  function navigate(view: View) {
+  function navigateToView(view: View) {
     if (view === "admin" && !canOpenAdminWorkspace(profile, userAccess)) {
       setAuthError(
         authUser
@@ -325,12 +351,26 @@ function App() {
     }
 
     setAuthError("");
-    setActiveView(view);
+
+    switch (view) {
+      case "admin":
+        navigate(EDITION_STUDIO_PATH);
+        break;
+      case "reader":
+        navigate("/reader");
+        break;
+      case "article":
+        navigate(`/article/${selectedArticleId}`);
+        break;
+      default:
+        navigate("/");
+        break;
+    }
   }
 
   function openArticle(articleId: string) {
     setSelectedArticleId(articleId);
-    setActiveView("article");
+    navigate(`/article/${articleId}`);
   }
 
   async function handleGoogleLogin() {
@@ -372,7 +412,7 @@ function App() {
         profile={profile}
         accessStatus={accessStatus}
         canOpenAdmin={canOpenAdminWorkspace(profile, userAccess)}
-        onNavigate={navigate}
+        onNavigate={navigateToView}
         onEmail={setEmailLogin}
         onPassword={setPasswordLogin}
         onEmailSignIn={handleEmailLogin}
@@ -397,74 +437,85 @@ function App() {
       )}
 
       <main>
-        {activeView === "dashboard" && (
-          <Dashboard
-            filteredPublishers={filteredPublishers}
-            contentSource={content.source}
-            contentStatus={contentStatus}
-            search={search}
-            language={language}
-            region={region}
-            topic={topic}
-            languageOptions={languageOptions}
-            regionOptions={regionOptions}
-            topicOptions={topicOptions}
-            onSearch={setSearch}
-            onLanguage={setLanguage}
-            onRegion={setRegion}
-            onTopic={setTopic}
-            onOpenReader={openReader}
-          />
-        )}
-
-        {activeView === "reader" && (
-          <ReaderView
-            articles={articles}
-            authUser={authUser}
-            profile={profile}
-            userAccess={userAccess}
-            publisher={selectedPublisher}
-            edition={selectedEdition}
-            editions={publisherEditions}
-            pageIndex={pageIndex}
-            zoom={zoom}
-            readerMode={readerMode}
-            onEditionId={(editionId) => {
-              setSelectedEditionId(editionId);
-              setPageIndex(0);
-            }}
-            onPageIndex={setPageIndex}
-            onZoom={setZoom}
-            onReaderMode={setReaderMode}
-            onOpenArticle={openArticle}
-          />
-        )}
-
-        {activeView === "article" && (
-          <ArticleView
-            key={selectedArticle.id}
-            article={selectedArticle}
-            authUser={authUser}
-            profile={profile}
-            userAccess={userAccess}
-            onBack={() => setActiveView("reader")}
-            onAuthRequired={() =>
-              setAuthError("Please sign in with Gmail to use subscriber actions.")
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <Dashboard
+                filteredPublishers={filteredPublishers}
+                contentSource={content.source}
+                contentStatus={contentStatus}
+                search={search}
+                language={language}
+                region={region}
+                topic={topic}
+                languageOptions={languageOptions}
+                regionOptions={regionOptions}
+                topicOptions={topicOptions}
+                onSearch={setSearch}
+                onLanguage={setLanguage}
+                onRegion={setRegion}
+                onTopic={setTopic}
+                onOpenReader={openReader}
+              />
             }
           />
-        )}
-
-        {activeView === "admin" && (
-          <AdminView
-            articles={articles}
-            campaigns={campaigns}
-            editions={editions}
-            profile={profile}
-            publishers={publishers}
-            authUser={authUser}
-            userAccess={userAccess}
+          <Route
+            path="/reader"
+            element={
+              <ReaderView
+                articles={articles}
+                authUser={authUser}
+                profile={profile}
+                userAccess={userAccess}
+                publisher={selectedPublisher}
+                edition={selectedEdition}
+                editions={publisherEditions}
+                pageIndex={pageIndex}
+                zoom={zoom}
+                readerMode={readerMode}
+                onEditionId={(editionId) => {
+                  setSelectedEditionId(editionId);
+                  setPageIndex(0);
+                }}
+                onPageIndex={setPageIndex}
+                onZoom={setZoom}
+                onReaderMode={setReaderMode}
+                onOpenArticle={openArticle}
+              />
+            }
           />
-        )}
+          <Route
+            path="/article/:articleId"
+            element={
+              <ArticleRoute
+                articles={articles}
+                authUser={authUser}
+                profile={profile}
+                userAccess={userAccess}
+                onAuthRequired={() =>
+                  setAuthError("Please sign in with Gmail to use subscriber actions.")
+                }
+              />
+            }
+          />
+          <Route
+            path={EDITION_STUDIO_PATH}
+            element={
+              <AdminView
+                articles={articles}
+                campaigns={campaigns}
+                editions={editions}
+                profile={profile}
+                publishers={publishers}
+                authUser={authUser}
+                userAccess={userAccess}
+              />
+            }
+          />
+          <Route path="/admin" element={<Navigate to={EDITION_STUDIO_PATH} replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
     </div>
   );
@@ -1119,6 +1170,49 @@ interface ArticleViewProps {
   onAuthRequired: () => void;
 }
 
+interface ArticleRouteProps {
+  articles: ArticlePost[];
+  authUser: User | null;
+  profile: UserProfile | null;
+  userAccess: UserAccess;
+  onAuthRequired: () => void;
+}
+
+function ArticleRoute({
+  articles,
+  authUser,
+  profile,
+  userAccess,
+  onAuthRequired,
+}: ArticleRouteProps) {
+  const { articleId } = useParams<{ articleId: string }>();
+  const navigate = useNavigate();
+  const article = articles.find((item) => item.id === articleId);
+
+  if (!article) {
+    return (
+      <section className="article-layout">
+        <p className="empty-state">Article not found.</p>
+        <button type="button" onClick={() => navigate("/reader")}>
+          Back to reader
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <ArticleView
+      key={article.id}
+      article={article}
+      authUser={authUser}
+      profile={profile}
+      userAccess={userAccess}
+      onBack={() => navigate("/reader")}
+      onAuthRequired={onAuthRequired}
+    />
+  );
+}
+
 function ArticleView({
   article,
   authUser,
@@ -1515,6 +1609,40 @@ function buildPublisherStats(
       tone: "neutral",
     },
   ];
+}
+
+function publisherMetricVariant(label: string) {
+  switch (label) {
+    case "Reach":
+      return "reach";
+    case "Followers":
+      return "followers";
+    case "Likes":
+      return "likes";
+    case "Viewers":
+      return "viewers";
+    case "Editions":
+      return "editions";
+    default:
+      return "reach";
+  }
+}
+
+function publisherMetricIcon(label: string) {
+  switch (label) {
+    case "Reach":
+      return <TrendingUp size={72} strokeWidth={1.5} aria-hidden="true" />;
+    case "Followers":
+      return <Users size={72} strokeWidth={1.5} aria-hidden="true" />;
+    case "Likes":
+      return <Heart size={72} strokeWidth={1.5} aria-hidden="true" />;
+    case "Viewers":
+      return <Eye size={72} strokeWidth={1.5} aria-hidden="true" />;
+    case "Editions":
+      return <Newspaper size={72} strokeWidth={1.5} aria-hidden="true" />;
+    default:
+      return <BarChart3 size={72} strokeWidth={1.5} aria-hidden="true" />;
+  }
 }
 
 interface AdminViewProps {
@@ -2625,22 +2753,24 @@ function AdminView({
   return (
     <section className="admin-layout">
       <div className="admin-hero compact">
-        <div>
-          <span className="eyebrow">Publisher dashboard</span>
-          <h1>Edition studio — upload pages, clip sections, publish posts.</h1>
-        </div>
-        <a href="#edition-studio" className="admin-action">
-          <FileUp size={18} />
-          Open edition studio
-        </a>
+        <span className="eyebrow">Publisher dashboard</span>
+        <h1>Edition studio — upload pages, clip sections, publish posts.</h1>
       </div>
 
-      <div className="metric-grid">
+      <div className="metric-grid admin-metric-grid">
         {dashboardStats.map((metric) => (
-          <article className={`metric-card ${metric.tone}`} key={metric.label}>
-            <span>{metric.label}</span>
-            <strong>{metric.value}</strong>
-            <small>{metric.delta}</small>
+          <article
+            className={`metric-card stat-box stat-box-${publisherMetricVariant(metric.label)}`}
+            key={metric.label}
+          >
+            <div className="stat-box-body">
+              <div className="stat-box-copy">
+                <strong className="stat-box-value">{metric.value}</strong>
+                <span className="stat-box-label">{metric.label}</span>
+              </div>
+              <div className="stat-box-icon">{publisherMetricIcon(metric.label)}</div>
+            </div>
+            <div className="stat-box-footer">{metric.delta}</div>
           </article>
         ))}
       </div>
@@ -2844,33 +2974,60 @@ function AdminView({
           <div className="edition-studio-workflow">
             {currentWorkflowEdition ? (
               <div className="workflow-focus-card compact">
-                <div>
+                <div className="workflow-focus-main">
                   <span className="status-chip">{formatRole(currentWorkflowEdition.status)}</span>
                   <strong>{currentWorkflowEdition.title}</strong>
-                  <p>
+                  <span className="workflow-focus-meta">
                     {currentWorkflowEdition.city} • {currentWorkflowEdition.date} •{" "}
                     {currentWorkflowBlocks.length} blocks • {currentWorkflowPosts.length} posts
-                  </p>
+                  </span>
                 </div>
-                <p>{currentWorkflowNextAction}</p>
+                <p className="workflow-focus-hint">{currentWorkflowNextAction}</p>
               </div>
             ) : (
               <p className="empty-state">Upload an edition to start clipping sections.</p>
             )}
-            <div className="timeline compact-timeline">
+            <div className="timeline compact-timeline" aria-label="Edition workflow progress">
               {[
                 { label: "Upload", done: Boolean(currentWorkflowEdition) },
                 { label: "Process", done: currentWorkflowHasPages },
                 { label: "Clip sections", done: currentWorkflowBlocks.length > 0 },
                 { label: "Create posts", done: currentWorkflowPosts.length > 0 },
                 { label: "Publish", done: currentWorkflowEdition?.status === "published" },
-              ].map((step) => (
-                <div className={`timeline-step ${step.done ? "done" : ""}`} key={step.label}>
-                  <CheckCircle2 size={16} />
-                  <span>{step.label}</span>
-                  <small>{step.done ? "Done" : "Next"}</small>
-                </div>
-              ))}
+              ].map((step, index, steps) => {
+                const isCurrent =
+                  !step.done && steps.slice(0, index).every((previousStep) => previousStep.done);
+
+                return (
+                  <div
+                    className={`timeline-step ${step.done ? "done" : ""} ${isCurrent ? "current" : ""}`}
+                    key={step.label}
+                  >
+                    <div className="timeline-step-rail">
+                      {index > 0 && (
+                        <span
+                          className={`timeline-line ${steps[index - 1].done ? "done" : ""}`}
+                          aria-hidden="true"
+                        />
+                      )}
+                      <span className="timeline-marker" aria-hidden={step.done}>
+                        {step.done ? (
+                          <CheckCircle2 size={18} strokeWidth={2.5} />
+                        ) : (
+                          <span className="timeline-marker-dot" />
+                        )}
+                      </span>
+                      {index < steps.length - 1 && (
+                        <span
+                          className={`timeline-line ${step.done ? "done" : ""}`}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
+                    <span className="timeline-step-label">{step.label}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
