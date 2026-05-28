@@ -1768,6 +1768,59 @@ main:has(.admin-layout) {
   background: #f1eee7;
 }
 
+.article-clip-open {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.article-clip-open img {
+  display: block;
+  width: 100%;
+  max-height: 640px;
+  object-fit: contain;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.article-clip-open-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  color: #fff;
+  background: rgba(22, 90, 76, 0.46);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.article-clip-open:hover .article-clip-open-overlay,
+.article-clip-open:focus-visible .article-clip-open-overlay {
+  opacity: 1;
+}
+
+.article-clip-read-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #165a4c;
+  background: #e7f2ec;
+  font-weight: 800;
+}
+
 .article-clip-image img {
   display: block;
   width: 100%;
@@ -1785,21 +1838,125 @@ main:has(.admin-layout) {
   font-weight: 800;
 }
 
-.article-content {
-  padding: clamp(22px, 4vw, 46px);
+.clip-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
 }
 
-.article-kicker {
+.clip-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 20, 18, 0.82);
+  cursor: pointer;
+}
+
+.clip-lightbox-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  pointer-events: none;
+}
+
+.clip-lightbox-toolbar,
+.clip-lightbox-stage {
+  pointer-events: auto;
+}
+
+.clip-lightbox-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
   align-items: center;
-  color: #165a4c;
-  font-weight: 900;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #eceae4;
+  border-bottom: 1px solid rgba(43, 59, 52, 0.12);
+}
+
+.clip-lightbox-caption {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.clip-lightbox-caption strong {
+  font-size: 0.92rem;
+  line-height: 1.3;
+}
+
+.clip-lightbox-caption span {
+  color: #69746f;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.clip-lightbox-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: #2b3b34;
+  background: #fff;
+  font-weight: 800;
+}
+
+.clip-lightbox-stage {
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+
+.clip-lightbox-stage img {
+  display: block;
+  max-width: min(960px, 92vw);
+  width: auto;
+  height: auto;
+  transform-origin: center center;
+  border: 1px solid rgba(43, 59, 52, 0.14);
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.article-content {
+  display: grid;
+  gap: 20px;
+  padding: clamp(22px, 4vw, 40px);
+}
+
+.article-content-lead {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(43, 59, 52, 0.1);
 }
 
 .article-content h1 {
-  font-size: clamp(2rem, 5vw, 4.5rem);
+  margin: 0;
+  font-size: clamp(1.75rem, 3.5vw, 2.75rem);
+  line-height: 1.15;
+}
+
+.article-content-lead .summary {
+  margin: 0;
+  color: #4f5c55;
+  font-size: 1.12rem;
+  line-height: 1.6;
+}
+
+.article-body {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.78;
+  color: #21332d;
 }
 
 .summary {
@@ -1812,11 +1969,15 @@ main:has(.admin-layout) {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 24px 0;
+  margin: 0;
   padding: 12px;
   border: 1px solid rgba(43, 59, 52, 0.12);
   border-radius: 8px;
   background: #f7f4ea;
+}
+
+.byline-card.compact {
+  padding: 10px 12px;
 }
 
 .byline-card div:nth-child(2) {
@@ -1829,9 +1990,9 @@ main:has(.admin-layout) {
   margin-top: 2px;
 }
 
-.article-content > p:last-of-type {
-  font-size: 1.08rem;
-  line-height: 1.78;
+.article-content .engagement-row {
+  padding-top: 4px;
+  border-top: 1px solid rgba(43, 59, 52, 0.1);
 }
 
 .action-feedback {

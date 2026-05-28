@@ -33,7 +33,6 @@ import {
   MapPin,
   MessageCircle,
   Newspaper,
-  PlaySquare,
   Plus,
   ExternalLink,
   Search,
@@ -44,7 +43,7 @@ import {
   TrendingUp,
   UserRound,
   Users,
-  Video,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -2640,6 +2639,114 @@ function ArticleRoute({
   );
 }
 
+interface ClipImageLightboxProps {
+  open: boolean;
+  imageUrl: string;
+  title: string;
+  caption: string;
+  onClose: () => void;
+}
+
+function ClipImageLightbox({
+  open,
+  imageUrl,
+  title,
+  caption,
+  onClose,
+}: ClipImageLightboxProps) {
+  const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    setZoom(1);
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [open, onClose]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="clip-lightbox" role="dialog" aria-modal="true" aria-label={title}>
+      <button
+        type="button"
+        className="clip-lightbox-backdrop"
+        aria-label="Close clip viewer"
+        onClick={onClose}
+      />
+
+      <div className="clip-lightbox-shell">
+        <div className="clip-lightbox-toolbar">
+          <div className="clip-lightbox-caption">
+            <strong>{title}</strong>
+            <span>{caption}</span>
+          </div>
+
+          <div className="studio-toolbar-group zoom-controls">
+            <span>Zoom</span>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              onClick={() => setZoom((currentZoom) => Math.max(0.5, currentZoom - 0.1))}
+            >
+              <ZoomOut size={16} />
+            </button>
+            <input
+              type="range"
+              min="50"
+              max="200"
+              step="5"
+              value={Math.round(zoom * 100)}
+              onChange={(event) => setZoom(Number(event.target.value) / 100)}
+              aria-label="Clip zoom level"
+            />
+            <span>{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              onClick={() => setZoom((currentZoom) => Math.min(2, currentZoom + 0.1))}
+            >
+              <ZoomIn size={16} />
+            </button>
+            <button type="button" onClick={() => setZoom(1)}>
+              Fit
+            </button>
+          </div>
+
+          <button type="button" className="clip-lightbox-close" onClick={onClose}>
+            <X size={18} />
+            Close
+          </button>
+        </div>
+
+        <div className="clip-lightbox-stage">
+          <img
+            src={imageUrl}
+            alt={title}
+            style={{ transform: `scale(${zoom})` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ArticleView({
   article,
   publisher,
@@ -2651,6 +2758,7 @@ function ArticleView({
   onAuthRequired,
   onOpenReader,
 }: ArticleViewProps) {
+  const [clipLightboxOpen, setClipLightboxOpen] = useState(false);
   const [comments, setComments] = useState<Comment[]>(() => article.comments);
   const [commentBody, setCommentBody] = useState("");
   const [feedback, setFeedback] = useState("");
@@ -2726,10 +2834,36 @@ function ArticleView({
       <article className="article-panel">
         {article.clippedImageUrl ? (
           <figure className="article-clip-image">
-            <img src={article.clippedImageUrl} alt={article.title} />
+            <button
+              type="button"
+              className="article-clip-open"
+              onClick={() => setClipLightboxOpen(true)}
+              aria-label={`Open clipping for ${article.title}`}
+            >
+              <img src={article.clippedImageUrl} alt={article.title} />
+              <span className="article-clip-open-overlay">
+                <Fullscreen size={20} />
+                Open clipping
+              </span>
+            </button>
             <figcaption>
               Page {article.pageNumber} clipping • {article.section}
             </figcaption>
+            <button
+              type="button"
+              className="article-clip-read-btn"
+              onClick={() => setClipLightboxOpen(true)}
+            >
+              <BookOpen size={16} />
+              Read clipping
+            </button>
+            <ClipImageLightbox
+              open={clipLightboxOpen}
+              imageUrl={article.clippedImageUrl}
+              title={article.title}
+              caption={`Page ${article.pageNumber} clipping • ${article.section}`}
+              onClose={() => setClipLightboxOpen(false)}
+            />
           </figure>
         ) : (
           <div className={`clip-visual ${article.clippedImageTone}`}>
@@ -2737,32 +2871,19 @@ function ArticleView({
           </div>
         )}
         <div className="article-content">
-          <div className="article-kicker">
-            <span>{article.section}</span>
+          <div className="article-content-lead">
+            <h1>{article.title}</h1>
+            <p className="summary">{article.summary}</p>
             {article.accessRule === "subscriber_only" && (
               <span className="lock-chip">
                 <Lock size={14} />
-                Subscriber
+                Subscriber-only story
               </span>
             )}
           </div>
-          <h1>{article.title}</h1>
-          <p className="summary">{article.summary}</p>
-          <div className="byline-card">
-            <div className="avatar">{article.author.name.slice(0, 1)}</div>
-            <div>
-              <strong>{article.author.name}</strong>
-              <span>
-                {article.author.publication} • {article.author.followers.toLocaleString()} followers
-              </span>
-            </div>
-            <button onClick={() => handleEngagement("follow")} disabled={pendingAction === "follow"}>
-              <Bell size={18} />
-              {pendingAction === "follow" ? "Following..." : "Follow"}
-            </button>
-          </div>
+
           {canReadSelectedArticle ? (
-            <p>{article.body}</p>
+            <p className="article-body">{article.body}</p>
           ) : (
             <div className="locked-panel compact" role="status">
               <Lock size={20} />
@@ -2774,6 +2895,27 @@ function ArticleView({
               </div>
             </div>
           )}
+
+          <div className="byline-card compact">
+            <div className="avatar">{article.author.name.slice(0, 1)}</div>
+            <div>
+              <strong>{article.author.name}</strong>
+              <span>
+                {article.author.publication} • {article.author.followers.toLocaleString()} followers
+              </span>
+            </div>
+            {!publisher && (
+              <button
+                type="button"
+                onClick={() => handleEngagement("follow")}
+                disabled={pendingAction === "follow"}
+              >
+                <Bell size={18} />
+                {pendingAction === "follow" ? "Following..." : "Follow"}
+              </button>
+            )}
+          </div>
+
           <div className="engagement-row">
             <button
               onClick={() => handleEngagement("like")}
@@ -2865,25 +3007,7 @@ function ArticleView({
           </section>
         )}
 
-        <section className="workspace-panel">
-          <div className="section-heading compact">
-            <span className="eyebrow">Multimedia enrichment</span>
-            <h2>Digital enhancements</h2>
-          </div>
-          <div className="media-list">
-            {article.multimedia.map((block) => (
-              <div className="media-card" key={block.title}>
-                {block.type === "video" ? <Video size={20} /> : <PlaySquare size={20} />}
-                <div>
-                  <strong>{block.title}</strong>
-                  <p>{block.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="workspace-panel">
+        <section className="workspace-panel article-discussion-panel">
           <div className="section-heading compact">
             <span className="eyebrow">Subscriber community</span>
             <h2>Discussion</h2>
