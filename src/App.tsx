@@ -2195,7 +2195,6 @@ function ReaderPaperPanel({
       <div className="viewer-toolbar">
         <div>
           <span className="eyebrow">Full-page e-paper</span>
-          <h1>{page?.headline ?? edition.title}</h1>
         </div>
         <div className="viewer-actions">
           <button type="button">
@@ -3564,14 +3563,26 @@ function ArticleView({
             <figcaption>
               Page {article.pageNumber} clipping • {article.section}
             </figcaption>
-            <button
-              type="button"
-              className="article-clip-read-btn"
-              onClick={() => setClipLightboxOpen(true)}
-            >
-              <BookOpen size={16} />
-              Read clipping
-            </button>
+            <div className="article-clip-actions">
+              <button
+                type="button"
+                className="article-clip-read-btn"
+                onClick={() => setClipLightboxOpen(true)}
+              >
+                <BookOpen size={16} />
+                Read clipping
+              </button>
+              {onOpenReader && publisher ? (
+                <button
+                  type="button"
+                  className="article-clip-read-btn"
+                  onClick={() => onOpenReader(publisher, article)}
+                >
+                  <BookOpen size={16} />
+                  Read newspaper
+                </button>
+              ) : null}
+            </div>
             <ClipImageLightbox
               open={clipLightboxOpen}
               imageUrl={article.clippedImageUrl}

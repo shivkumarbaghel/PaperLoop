@@ -1490,11 +1490,6 @@ main:has(.admin-layout) {
   margin-bottom: 16px;
 }
 
-.viewer-toolbar h1 {
-  margin: 4px 0 0;
-  font-size: clamp(1.7rem, 4vw, 3.2rem);
-}
-
 .source-asset-reader {
   display: grid;
   gap: 12px;
@@ -1825,12 +1820,18 @@ main:has(.admin-layout) {
   opacity: 1;
 }
 
+.article-clip-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .article-clip-read-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: fit-content;
+  width: 100%;
   padding: 10px 14px;
   border-radius: 8px;
   color: #165a4c;
@@ -4558,7 +4559,8 @@ main:has(.admin-layout) {
   }
 
   .feed-post-actions,
-  .publisher-context-actions {
+  .publisher-context-actions,
+  .article-clip-actions {
     grid-template-columns: 1fr;
   }
 
