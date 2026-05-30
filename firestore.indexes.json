@@ -1,0 +1,77 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "articleBlocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "editionId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "articleBlocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "pageId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "articlePosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "editionId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "articlePosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "pageId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "comments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "editionId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "comments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "pageId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "engagements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "editionId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "engagements",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "pageId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pageAssets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "publisherId", "order": "ASCENDING" },
+        { "fieldPath": "editionId", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -493,26 +493,37 @@ export async function deletePublisherEdition(edition: Edition): Promise<void> {
       getDocs(
         query(
           collection(firebase.db, "articleBlocks"),
+          where("publisherId", "==", edition.publisherId),
           where("editionId", "==", edition.id),
         ),
       ),
       getDocs(
         query(
           collection(firebase.db, "articlePosts"),
+          where("publisherId", "==", edition.publisherId),
           where("editionId", "==", edition.id),
         ),
       ),
       getDocs(
-        query(collection(firebase.db, "comments"), where("editionId", "==", edition.id)),
+        query(
+          collection(firebase.db, "comments"),
+          where("publisherId", "==", edition.publisherId),
+          where("editionId", "==", edition.id),
+        ),
       ),
       getDocs(
         query(
           collection(firebase.db, "engagements"),
+          where("publisherId", "==", edition.publisherId),
           where("editionId", "==", edition.id),
         ),
       ),
       getDocs(
-        query(collection(firebase.db, "pageAssets"), where("editionId", "==", edition.id)),
+        query(
+          collection(firebase.db, "pageAssets"),
+          where("publisherId", "==", edition.publisherId),
+          where("editionId", "==", edition.id),
+        ),
       ),
     ]);
 
@@ -562,16 +573,32 @@ export async function deletePublisherEditionPage(
   const [blocksSnapshot, postsSnapshot, commentsSnapshot, engagementsSnapshot, pageAssetSnapshot] =
     await Promise.all([
       getDocs(
-        query(collection(firebase.db, "articleBlocks"), where("pageId", "==", pageId)),
+        query(
+          collection(firebase.db, "articleBlocks"),
+          where("publisherId", "==", edition.publisherId),
+          where("pageId", "==", pageId),
+        ),
       ),
       getDocs(
-        query(collection(firebase.db, "articlePosts"), where("pageId", "==", pageId)),
+        query(
+          collection(firebase.db, "articlePosts"),
+          where("publisherId", "==", edition.publisherId),
+          where("pageId", "==", pageId),
+        ),
       ),
       getDocs(
-        query(collection(firebase.db, "comments"), where("pageId", "==", pageId)),
+        query(
+          collection(firebase.db, "comments"),
+          where("publisherId", "==", edition.publisherId),
+          where("pageId", "==", pageId),
+        ),
       ),
       getDocs(
-        query(collection(firebase.db, "engagements"), where("pageId", "==", pageId)),
+        query(
+          collection(firebase.db, "engagements"),
+          where("publisherId", "==", edition.publisherId),
+          where("pageId", "==", pageId),
+        ),
       ),
       getDoc(doc(firebase.db, "pageAssets", pageId)),
     ]);

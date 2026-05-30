@@ -4749,6 +4749,18 @@ interface AdminViewProps {
   userAccess: UserAccess;
 }
 
+function PageThumbSkeleton({ label }: { label: string }) {
+  return (
+    <div className="page-thumb-row page-thumb-skeleton" aria-busy="true" aria-label={label}>
+      <div className="page-thumb">
+        <div className="page-thumb-skeleton-image" />
+        <div className="page-thumb-skeleton-line" />
+        <div className="page-thumb-skeleton-line short" />
+      </div>
+    </div>
+  );
+}
+
 function AdminView({
   articles,
   authUser,
@@ -4834,6 +4846,7 @@ function AdminView({
   const [pageAppendStatus, setPageAppendStatus] = useState<
     "idle" | "uploading" | "success" | "error"
   >("idle");
+  const [pendingPageSkeletonCount, setPendingPageSkeletonCount] = useState(0);
   const pageAppendInputRef = useRef<HTMLInputElement>(null);
   const [workflowEditionId, setWorkflowEditionId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<"success" | "error">(
@@ -5299,6 +5312,7 @@ function AdminView({
     }
 
     setPageAppendStatus("uploading");
+    setPendingPageSkeletonCount(1);
     setUploadMessage("");
 
     try {
@@ -5338,6 +5352,7 @@ function AdminView({
         error instanceof Error ? error.message : "Unable to add pages to this edition.",
       );
     } finally {
+      setPendingPageSkeletonCount(0);
       setPageAppendStatus((currentStatus) =>
         currentStatus === "uploading" ? "idle" : currentStatus,
       );
@@ -5365,7 +5380,6 @@ function AdminView({
       return;
     }
 
-    setPageAppendStatus("uploading");
     setUploadMessage("");
 
     try {
@@ -5405,8 +5419,6 @@ function AdminView({
       setUploadMessage(
         error instanceof Error ? error.message : "Unable to delete this page.",
       );
-    } finally {
-      setPageAppendStatus("idle");
     }
   }
 
@@ -7173,6 +7185,13 @@ function AdminView({
                           </button>
                         </div>
                       ))}
+                      {pendingPageSkeletonCount > 0 &&
+                        Array.from({ length: pendingPageSkeletonCount }, (_, index) => (
+                          <PageThumbSkeleton
+                            key={`pending-page-${index}`}
+                            label="Adding page"
+                          />
+                        ))}
                       <label
                         className={`page-add-card ${pageAppendStatus === "uploading" ? "loading" : ""}`}
                       >

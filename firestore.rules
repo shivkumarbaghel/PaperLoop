@@ -135,12 +135,14 @@ service cloud.firestore {
 
     match /editions/{editionId} {
       allow read: if canReadContent(resource.data);
-      allow write: if canManagePublisher(request.resource.data.publisherId);
+      allow create, update: if canManagePublisher(request.resource.data.publisherId);
+      allow delete: if canManagePublisher(resource.data.publisherId);
     }
 
     match /articlePosts/{articleId} {
       allow read: if canReadContent(resource.data);
-      allow write: if canManagePublisher(request.resource.data.publisherId);
+      allow create, update: if canManagePublisher(request.resource.data.publisherId);
+      allow delete: if canManagePublisher(resource.data.publisherId);
     }
 
     match /articleBlocks/{blockId} {
@@ -159,12 +161,14 @@ service cloud.firestore {
 
     match /pageAssets/{pageAssetId} {
       allow read: if true;
-      allow write: if false;
+      allow create, update: if false;
+      allow delete: if signedIn() && canManagePublisher(resource.data.publisherId);
     }
 
     match /processingJobs/{jobId} {
       allow read: if signedIn() && canManagePublisher(resource.data.publisherId);
-      allow write: if false;
+      allow create, update: if false;
+      allow delete: if signedIn() && canManagePublisher(resource.data.publisherId);
     }
 
     match /comments/{commentId} {
@@ -191,7 +195,8 @@ service cloud.firestore {
         && exists(articlePath(request.resource.data.articlePostId))
         && canReadContent(get(articlePath(request.resource.data.articlePostId)).data);
       allow read: if canManagePublisher(resource.data.publisherId);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if signedIn() && canManagePublisher(resource.data.publisherId);
     }
 
     match /subscriptions/{subscriptionId} {
