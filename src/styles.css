@@ -78,6 +78,20 @@ a {
   padding: 0;
 }
 
+.topbar-start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbar .topbar-back {
+  flex-shrink: 0;
+  margin-left: -20px;
+  background: #fffdf8;
+  border: 1px solid rgba(43, 59, 52, 0.12);
+}
+
 .brand-mark,
 .publisher-logo,
 .avatar {
@@ -614,7 +628,10 @@ main:has(.admin-layout) {
 
 .reader-filter-back {
   flex-shrink: 0;
-  margin-right: 4px;
+}
+
+.reader-newspaper-topbar .reader-filter-back {
+  margin-right: 0;
 }
 
 .reader-filter-bar .select-filter.compact {
@@ -1230,10 +1247,6 @@ main:has(.admin-layout) {
 }
 
 .reader-newspaper-topbar {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px 16px;
   padding: 10px 14px;
   border: 1px solid rgba(43, 59, 52, 0.12);
   border-radius: 8px;
@@ -2098,6 +2111,12 @@ main:has(.admin-layout) {
 .back-button {
   width: fit-content;
   background: #fffdf8;
+}
+
+.back-button-icon-only {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
 }
 
 .article-panel {
@@ -5374,7 +5393,7 @@ main:has(.admin-layout) {
   }
 
   .reader-newspaper-topbar {
-    grid-template-columns: 1fr;
+    padding: 10px 12px;
   }
 
   .reader-edition-topbar {
@@ -5440,6 +5459,10 @@ main:has(.admin-layout) {
 
   .topbar {
     padding-inline: 12px;
+  }
+
+  .topbar .topbar-back {
+    margin-left: -4px;
   }
 
   .main-nav {

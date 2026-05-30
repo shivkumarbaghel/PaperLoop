@@ -415,9 +415,86 @@ function articleBackNavigationTarget(
   }
 
   return {
-    path: newspaperReaderPathForArticle(article.id),
-    label: `Back to e-paper page ${article.pageNumber}`,
+    path: "/reader",
+    label: "Back to reader",
   };
+}
+
+interface BackIconButtonProps {
+  label: string;
+  onClick: () => void;
+  className?: string;
+}
+
+function BackIconButton({ label, onClick, className = "" }: BackIconButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`back-button back-button-icon-only${className ? ` ${className}` : ""}`}
+      onClick={onClick}
+      aria-label={label}
+    >
+      <ArrowLeft size={18} />
+    </button>
+  );
+}
+
+function goBackOrFallback(
+  navigate: ReturnType<typeof useNavigate>,
+  fallbackPath: string,
+) {
+  if (typeof window !== "undefined" && (window.history.state?.idx ?? 0) > 0) {
+    navigate(-1);
+    return;
+  }
+
+  navigate(fallbackPath);
+}
+
+function resolveHeaderBackNavigation(
+  pathname: string,
+  searchParams: URLSearchParams,
+  articles: ArticlePost[],
+  profile: UserProfile | null,
+  userAccess: UserAccess,
+) {
+  if (pathname.startsWith(`${READER_NEWSPAPER_EDITION_PATH}/`)) {
+    return {
+      path: "/reader",
+      label: "Back to reader",
+    };
+  }
+
+  if (pathname.startsWith("/reader/newspaper/")) {
+    const articleId = pathname.slice("/reader/newspaper/".length).split("/")[0];
+    if (articleId) {
+      return {
+        path: `/article/${articleId}`,
+        label: "Back to article",
+      };
+    }
+  }
+
+  if (pathname.startsWith("/article/")) {
+    const articleId = pathname.slice("/article/".length).split("/")[0];
+    const article = articles.find((item) => item.id === articleId);
+
+    if (article) {
+      const studioContext = readEditionStudioContext();
+      const fromEditionStudio =
+        searchParams.get("from") === "edition-studio" ||
+        studioContext?.previewEditionId === article.editionId;
+
+      return articleBackNavigationTarget(article, profile, userAccess, fromEditionStudio);
+    }
+
+    return {
+      path: "/reader",
+      label: "Back to reader",
+    };
+  }
+
+  return null;
 }
 
 function samePublisherId(left: string, right: string) {
@@ -455,6 +532,7 @@ function newspaperReaderPathForEdition(editionId: string, pageIndex = 0) {
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const activeView = activeViewFromPath(location.pathname);
   const isNewspaperReaderRoute = location.pathname.startsWith("/reader/newspaper");
   const [selectedPublisherId, setSelectedPublisherId] = useState(
@@ -497,6 +575,18 @@ function App() {
   );
 
   const { publishers, editions, articles, campaigns } = content;
+
+  const headerBack = useMemo(
+    () =>
+      resolveHeaderBackNavigation(
+        location.pathname,
+        searchParams,
+        articles,
+        profile,
+        userAccess,
+      ),
+    [location.pathname, searchParams, articles, profile, userAccess],
+  );
 
   useEffect(
     () =>
@@ -923,6 +1013,14 @@ function App() {
         profile={profile}
         accessStatus={accessStatus}
         canOpenAdmin={canOpenAdminWorkspace(profile, userAccess)}
+        headerBack={
+          headerBack
+            ? {
+                label: "Back",
+                onClick: () => goBackOrFallback(navigate, headerBack.path),
+              }
+            : null
+        }
         onNavigate={navigateToView}
         onEmail={setEmailLogin}
         onPassword={setPasswordLogin}
@@ -1137,6 +1235,7 @@ interface HeaderProps {
   profile: UserProfile | null;
   accessStatus: "signed_out" | "loading" | "ready" | "error";
   canOpenAdmin: boolean;
+  headerBack: { label: string; onClick: () => void } | null;
   onNavigate: (view: View) => void;
   onEmail: (value: string) => void;
   onPassword: (value: string) => void;
@@ -1154,6 +1253,7 @@ function Header({
   profile,
   accessStatus,
   canOpenAdmin,
+  headerBack,
   onNavigate,
   onEmail,
   onPassword,
@@ -1163,13 +1263,22 @@ function Header({
 }: HeaderProps) {
   return (
     <header className="topbar">
-      <button className="brand" onClick={() => onNavigate("dashboard")}>
-        <span className="brand-mark">PL</span>
-        <span>
-          <strong>PaperLoop</strong>
-          <small>e-akhabaar platform</small>
-        </span>
-      </button>
+      <div className="topbar-start">
+        {headerBack ? (
+          <BackIconButton
+            className="topbar-back"
+            label={headerBack.label}
+            onClick={headerBack.onClick}
+          />
+        ) : null}
+        <button className="brand" onClick={() => onNavigate("dashboard")}>
+          <span className="brand-mark">PL</span>
+          <span>
+            <strong>PaperLoop</strong>
+            <small>e-akhabaar platform</small>
+          </span>
+        </button>
+      </div>
 
       <nav className="main-nav" aria-label="Primary navigation">
         <button
@@ -2824,7 +2933,6 @@ function NewspaperReaderRoute({
 }: NewspaperReaderRouteProps) {
   const { articleId, editionId } = useParams<{ articleId?: string; editionId?: string }>();
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const article = articleId ? articles.find((item) => item.id === articleId) : undefined;
   const editionExists = editionId ? editions.some((item) => item.id === editionId) : false;
   const pageQuery = searchParams.get("page") ?? "0";
@@ -2848,10 +2956,6 @@ function NewspaperReaderRoute({
     return (
       <section className="reader-layout reader-newspaper-route">
         <p className="empty-state">Article not found.</p>
-        <button type="button" className="back-button" onClick={() => navigate("/reader")}>
-          <ArrowLeft size={18} />
-          Back to feed
-        </button>
       </section>
     );
   }
@@ -2860,30 +2964,15 @@ function NewspaperReaderRoute({
     return (
       <section className="reader-layout reader-newspaper-route">
         <p className="empty-state">Newspaper edition not found.</p>
-        <button type="button" className="back-button" onClick={() => navigate("/reader")}>
-          <ArrowLeft size={18} />
-          Back to feed
-        </button>
       </section>
     );
   }
-
-  const backPath = article ? `/article/${article.id}` : "/reader";
-  const backLabel = article ? "Back to article" : "Back to feed";
 
   const sidebarPublishers = publishers;
 
   return (
     <section className="reader-layout reader-newspaper-route">
       <div className="reader-filter-bar reader-newspaper-topbar">
-        <button
-          type="button"
-          className="back-button reader-filter-back"
-          onClick={() => navigate(backPath)}
-        >
-          <ArrowLeft size={18} />
-          {backLabel}
-        </button>
         <ReaderEditionBar
           publisher={publisher}
           edition={edition}
@@ -2941,8 +3030,6 @@ interface ArticleViewProps {
   authUser: User | null;
   profile: UserProfile | null;
   userAccess: UserAccess;
-  onBack: () => void;
-  backLabel: string;
   onAuthRequired: () => void;
   onOpenReader?: (publisher: Publisher, article?: ArticlePost) => void;
 }
@@ -3657,39 +3744,16 @@ function ArticleRoute({
   onOpenReader,
 }: ArticleRouteProps) {
   const { articleId } = useParams<{ articleId: string }>();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const article = articles.find((item) => item.id === articleId);
   const publisher = publishers.find((item) => item.id === article?.publisherId);
-  const studioContext = readEditionStudioContext();
-  const fromEditionStudio =
-    searchParams.get("from") === "edition-studio" ||
-    (article != null && studioContext?.previewEditionId === article.editionId);
 
   if (!article) {
-    const backPath =
-      fromEditionStudio && canOpenAdminWorkspace(profile, userAccess)
-        ? EDITION_STUDIO_PATH
-        : "/reader";
-    const backLabel =
-      backPath === EDITION_STUDIO_PATH ? "Back to edition studio" : "Back to reader";
-
     return (
       <section className="article-layout">
         <p className="empty-state">Article not found.</p>
-        <button type="button" onClick={() => navigate(backPath)}>
-          {backLabel}
-        </button>
       </section>
     );
   }
-
-  const backNavigation = articleBackNavigationTarget(
-    article,
-    profile,
-    userAccess,
-    fromEditionStudio,
-  );
 
   return (
     <ArticleView
@@ -3699,8 +3763,6 @@ function ArticleRoute({
       authUser={authUser}
       profile={profile}
       userAccess={userAccess}
-      onBack={() => navigate(backNavigation.path)}
-      backLabel={backNavigation.label}
       onAuthRequired={onAuthRequired}
       onOpenReader={onOpenReader}
     />
@@ -3850,8 +3912,6 @@ function ArticleView({
   authUser,
   profile,
   userAccess,
-  onBack,
-  backLabel,
   onAuthRequired,
   onOpenReader,
 }: ArticleViewProps) {
@@ -3987,11 +4047,6 @@ function ArticleView({
 
   return (
     <section className="article-layout">
-      <button className="back-button" onClick={onBack}>
-        <ArrowLeft size={18} />
-        {backLabel}
-      </button>
-
       <article className="article-panel">
         {article.clippedImageUrl ? (
           <figure className="article-clip-image">
