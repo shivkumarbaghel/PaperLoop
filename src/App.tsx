@@ -4776,6 +4776,26 @@ function PageThumbSkeleton({ label }: { label: string }) {
   );
 }
 
+function SectionPanelSkeletonInput({
+  label,
+  wide = false,
+  tall = false,
+}: {
+  label: string;
+  wide?: boolean;
+  tall?: boolean;
+}) {
+  return (
+    <label className={wide ? "studio-field-wide" : undefined}>
+      <span>{label}</span>
+      <div
+        className={`section-panel-skeleton-control${tall ? " tall" : ""}`}
+        aria-hidden="true"
+      />
+    </label>
+  );
+}
+
 function AdminView({
   articles,
   authUser,
@@ -7549,18 +7569,27 @@ function AdminView({
                         </figure>
                       </div>
                     )}
-                    <div className="section-panel-body">
+                    <div
+                      className="section-panel-body"
+                      aria-busy={clipExtractStatus === "loading"}
+                    >
                       {clipExtractStatus === "loading" && (
                         <p className="clip-extract-status loading">Extracting clip details...</p>
                       )}
                       <div className="section-panel-form-group section-panel-form-group--meta">
                         <h3 className="section-panel-form-group-title">Classification</h3>
                         <div className="form-grid">
+                        {clipExtractStatus === "loading" ? (
+                          <>
+                            <SectionPanelSkeletonInput label="Type" />
+                            <SectionPanelSkeletonInput label="Section" />
+                          </>
+                        ) : (
+                          <>
                         <label>
                           <span>Type</span>
                           <select
                             value={blockType}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) =>
                               setBlockType(event.target.value as ArticleBlockType)
                             }
@@ -7576,20 +7605,30 @@ function AdminView({
                           <span>Section</span>
                           <input
                             value={articleSection}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleSection(event.target.value)}
                           />
                         </label>
+                          </>
+                        )}
                         </div>
                       </div>
                       <details className="section-panel-advanced section-panel-advanced--story" open>
                         <summary>Story details</summary>
                         <div className="form-grid">
+                        {clipExtractStatus === "loading" ? (
+                          <>
+                            <SectionPanelSkeletonInput label="Title" />
+                            <SectionPanelSkeletonInput label="Hotspot label" />
+                            <SectionPanelSkeletonInput label="Editor" wide />
+                            <SectionPanelSkeletonInput label="Summary" wide tall />
+                            <SectionPanelSkeletonInput label="Body" wide tall />
+                          </>
+                        ) : (
+                          <>
                         <label>
                           <span>Title</span>
                           <input
                             value={articleTitle}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleTitle(event.target.value)}
                             placeholder="Headline"
                           />
@@ -7598,7 +7637,6 @@ function AdminView({
                           <span>Hotspot label</span>
                           <input
                             value={blockLabel}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => {
                               setBlockLabel(event.target.value);
                               setArticleHotspotLabel(event.target.value);
@@ -7609,7 +7647,6 @@ function AdminView({
                           <span>Editor</span>
                           <select
                             value={articleEditorId}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => {
                               const editorId = event.target.value;
                               const editor = publisherEditorProfiles.find(
@@ -7646,7 +7683,6 @@ function AdminView({
                           <span>Summary</span>
                           <textarea
                             value={articleSummary}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleSummary(event.target.value)}
                             rows={2}
                           />
@@ -7655,11 +7691,12 @@ function AdminView({
                           <span>Body</span>
                           <textarea
                             value={articleBody}
-                            disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleBody(event.target.value)}
                             rows={3}
                           />
                         </label>
+                          </>
+                        )}
                         </div>
                       </details>
                       <details
@@ -7824,7 +7861,7 @@ function AdminView({
                           </select>
                         </label>
                       </details>
-                      {blockMessage && (
+                      {blockMessage && clipExtractStatus !== "loading" && (
                         <p className={`action-feedback ${blockSaveStatus}`}>{blockMessage}</p>
                       )}
                       {articleCreateMessage && (

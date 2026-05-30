@@ -31,12 +31,15 @@ service firebase.storage {
 
     match /publishers/{publisherId}/{allPaths=**} {
       allow read: if true;
-      allow write: if canManagePublisher(publisherId) && safeAsset();
+      allow write: if canManagePublisher(publisherId)
+        && (request.resource == null || safeAsset());
     }
 
     match /users/{userId}/{allPaths=**} {
       allow read: if true;
-      allow write: if signedIn() && request.auth.uid == userId && safeAsset();
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && (request.resource == null || safeAsset());
     }
   }
 }

@@ -3816,6 +3816,29 @@ main:has(.admin-layout) {
   gap: 8px;
 }
 
+.section-panel-form-skeleton {
+  display: grid;
+  gap: 10px;
+}
+
+.section-panel-skeleton-control {
+  width: 100%;
+  height: 38px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #e8e4db 0%, #f6f4ee 45%, #e8e4db 90%);
+  background-size: 200% 100%;
+  animation: page-thumb-shimmer 1.35s ease-in-out infinite;
+}
+
+.section-panel-skeleton-control.tall {
+  height: 72px;
+}
+
+.section-panel-body[aria-busy="true"] .section-panel-advanced:not(.section-panel-advanced--story) {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
 .section-panel-footer {
   flex-shrink: 0;
   display: grid;
