@@ -127,6 +127,7 @@ import {
 import {
   ClipRegionDrawer,
   type ClipRegionGeometry,
+  type ActiveBlockOverlay,
 } from "./components/ClipRegionDrawer";
 import {
   editionLocations as fallbackEditionLocations,
@@ -4585,6 +4586,20 @@ function upsertBlock(blocks: ArticleBlock[], nextBlock: ArticleBlock) {
   return blocks.map((block) => (block.id === nextBlock.id ? nextBlock : block));
 }
 
+function upsertArticle(articles: ArticlePost[], nextArticle: ArticlePost) {
+  const existingArticleIndex = articles.findIndex(
+    (article) => article.id === nextArticle.id,
+  );
+
+  if (existingArticleIndex === -1) {
+    return [nextArticle, ...articles];
+  }
+
+  return articles.map((article) =>
+    article.id === nextArticle.id ? nextArticle : article,
+  );
+}
+
 function normalizeBlockGeometry(geometry: BlockGeometry): BlockGeometry {
   const x = Math.min(99, clampPercent(geometry.x));
   const y = Math.min(99, clampPercent(geometry.y));
@@ -4878,6 +4893,9 @@ function AdminView({
   >("idle");
   const [articleCreateMessage, setArticleCreateMessage] = useState("");
   const [sectionClipImageFile, setSectionClipImageFile] = useState<File | null>(null);
+  const [sectionClipImagePreviewUrl, setSectionClipImagePreviewUrl] = useState<string | null>(
+    null,
+  );
   const [sectionClipImageStatus, setSectionClipImageStatus] = useState<
     "idle" | "uploading" | "success" | "error"
   >("idle");
@@ -5241,7 +5259,16 @@ function AdminView({
     }
 
     hydrateSectionFormFromArticle(selectedClipSavedPost);
-  }, [selectedBlockId, selectedClipSavedPost?.id]);
+  }, [selectedBlockId, selectedClipSavedPost?.id, selectedClipSavedPost?.clippedImageUrl]);
+
+  useEffect(
+    () => () => {
+      if (sectionClipImagePreviewUrl) {
+        URL.revokeObjectURL(sectionClipImagePreviewUrl);
+      }
+    },
+    [sectionClipImagePreviewUrl],
+  );
 
   async function handleDraftUpload() {
     if (!authUser || !sourceFile) {
@@ -5769,6 +5796,13 @@ function AdminView({
     setArticleCreateStatus("idle");
     setArticleCreateMessage("");
     setSectionClipImageFile(null);
+    setSectionClipImagePreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+
+      return null;
+    });
     setSectionClipImageStatus("idle");
     setSectionClipImageMessage("");
     if (sectionClipImageInputRef.current) {
@@ -6029,6 +6063,13 @@ function AdminView({
     setArticleCreateStatus("idle");
     setArticleCreateMessage("");
     setSectionClipImageFile(null);
+    setSectionClipImagePreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+
+      return null;
+    });
     setSectionClipImageStatus("idle");
     setSectionClipImageMessage("");
     if (sectionClipImageInputRef.current) {
@@ -6045,6 +6086,28 @@ function AdminView({
     }
 
     setBlockMessage("");
+
+    // Generate a client-side crop preview immediately so the right panel
+    // shows the newspaper region even before the block has been published.
+    if (previewEdition && selectedArticlePage) {
+      void createDraftClipPreviewUrl(previewEdition, selectedArticlePage, geometry).then(
+        (url) => { if (url) setDraftClipPreviewUrl(url); },
+      );
+    }
+  }
+
+  /** Called when the user drags or resizes the active block on the stage. */
+  function handleActiveBlockChange(geom: ClipRegionGeometry) {
+    setBlockX(geom.x);
+    setBlockY(geom.y);
+    setBlockWidth(geom.width);
+    setBlockHeight(geom.height);
+    // Regenerate the clip preview thumbnail from the new region
+    if (previewEdition && selectedArticlePage) {
+      void createDraftClipPreviewUrl(previewEdition, selectedArticlePage, geom).then(
+        (url) => { if (url) setDraftClipPreviewUrl(url); },
+      );
+    }
   }
 
   async function handleRefreshClipImage() {
@@ -6100,9 +6163,7 @@ function AdminView({
         ),
       );
       setCreatedArticles((currentArticles) =>
-        currentArticles.map((article) =>
-          article.id === result.article.id ? result.article : article,
-        ),
+        upsertArticle(currentArticles, result.article),
       );
 
       if (result.block) {
@@ -6127,9 +6188,17 @@ function AdminView({
   }
 
   function handleSectionClipImageFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setSectionClipImageFile(event.target.files?.[0] ?? null);
+    const nextFile = event.target.files?.[0] ?? null;
+    setSectionClipImageFile(nextFile);
     setSectionClipImageStatus("idle");
     setSectionClipImageMessage("");
+    setSectionClipImagePreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+
+      return nextFile ? URL.createObjectURL(nextFile) : null;
+    });
   }
 
   async function handleSectionClipImageUpload() {
@@ -6171,13 +6240,12 @@ function AdminView({
         ),
       );
       setCreatedArticles((currentArticles) =>
-        currentArticles.map((article) =>
-          article.id === result.article.id ? result.article : article,
-        ),
+        upsertArticle(currentArticles, result.article),
       );
 
       if (result.block) {
         setWorkspaceBlocks((currentBlocks) => upsertBlock(currentBlocks, result.block!));
+        setSelectedBlockId(result.block.id);
       }
 
       hydrateSectionFormFromArticle(result.article);
@@ -6188,8 +6256,17 @@ function AdminView({
       }
 
       setSectionClipImageFile(null);
+      setSectionClipImagePreviewUrl((currentPreviewUrl) => {
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+
+        return null;
+      });
       setSectionClipImageStatus("success");
-      setSectionClipImageMessage("Clip image replaced. The preview should update immediately.");
+      setSectionClipImageMessage(
+        "Clip image replaced. The preview above should update immediately.",
+      );
       if (sectionClipImageInputRef.current) {
         sectionClipImageInputRef.current.value = "";
       }
@@ -6430,9 +6507,7 @@ function AdminView({
           ),
         );
         setCreatedArticles((currentArticles) =>
-          currentArticles.map((article) =>
-            article.id === updateResult.article.id ? updateResult.article : article,
-          ),
+          upsertArticle(currentArticles, updateResult.article),
         );
 
         if (updateResult.block) {
@@ -7356,6 +7431,12 @@ function AdminView({
                       <ClipRegionDrawer
                         enabled={clipDrawMode && Boolean(selectedArticlePage.imageUrl)}
                         onDrawComplete={(geometry) => void handleClipDrawComplete(geometry)}
+                        activeBlock={
+                          !hideClips && activeClipOverlay
+                            ? (activeClipOverlay as ActiveBlockOverlay)
+                            : null
+                        }
+                        onActiveBlockChange={handleActiveBlockChange}
                       >
                         {selectedArticlePage.imageUrl ? (
                           <img
@@ -7390,19 +7471,6 @@ function AdminView({
                                 <span>{block.label}</span>
                               </button>
                             ))}
-                        {!hideClips && activeClipOverlay && (
-                          <div
-                            className={`clip-block active ${activeClipOverlay.isDraft ? "draft" : ""}`}
-                            style={{
-                              left: `${activeClipOverlay.x}%`,
-                              top: `${activeClipOverlay.y}%`,
-                              width: `${activeClipOverlay.width}%`,
-                              height: `${activeClipOverlay.height}%`,
-                            }}
-                          >
-                            <span>{activeClipOverlay.label}</span>
-                          </div>
-                        )}
                       </ClipRegionDrawer>
                     </div>
                   </div>
@@ -7678,19 +7746,31 @@ function AdminView({
                                 Selected: {sectionClipImageFile.name}
                               </p>
                             )}
-                            <button
-                              type="button"
-                              className="secondary-action"
-                              disabled={
-                                !sectionClipImageFile || sectionClipImageStatus === "uploading"
-                              }
-                              onClick={() => void handleSectionClipImageUpload()}
-                            >
-                              <FileUp size={15} />
-                              {sectionClipImageStatus === "uploading"
-                                ? "Uploading..."
-                                : "Upload image"}
-                            </button>
+                            {sectionClipImagePreviewUrl && (
+                              <figure className="saved-clip-preview clip-detail-preview replacement-preview">
+                                <img
+                                  src={sectionClipImagePreviewUrl}
+                                  alt="Replacement clip preview"
+                                />
+                                <figcaption>Replacement preview (upload to apply)</figcaption>
+                              </figure>
+                            )}
+                            <div className="clip-image-upload-actions">
+                              <button
+                                type="button"
+                                className="secondary-action"
+                                disabled={
+                                  !sectionClipImageFile ||
+                                  sectionClipImageStatus === "uploading"
+                                }
+                                onClick={() => void handleSectionClipImageUpload()}
+                              >
+                                <FileUp size={15} />
+                                {sectionClipImageStatus === "uploading"
+                                  ? "Uploading..."
+                                  : "Upload & replace image"}
+                              </button>
+                            </div>
                             {sectionClipImageMessage && (
                               <p className={`action-feedback ${sectionClipImageStatus}`}>
                                 {sectionClipImageMessage}

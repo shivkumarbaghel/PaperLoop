@@ -3974,6 +3974,20 @@ main:has(.admin-layout) {
   background: #faf9f4;
 }
 
+.section-panel-image-upload .clip-image-upload-actions {
+  display: grid;
+}
+
+.section-panel-image-upload .replacement-preview {
+  margin: 0;
+}
+
+.section-panel-image-upload .replacement-preview img {
+  max-height: 120px;
+  width: 100%;
+  object-fit: cover;
+}
+
 .section-panel .saved-clip-preview img {
   max-height: 120px;
 }
@@ -5324,9 +5338,45 @@ main:has(.admin-layout) {
   box-shadow: 0 0 0 3px rgba(19, 217, 251, 0.3);
 }
 
-.clip-block.active span {
+.clip-block.active span,
+.clip-block.active .clip-block-label {
   background: rgba(8, 145, 178, 0.94);
 }
+
+/* Draggable/resizable active block */
+.clip-block--interactive {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+/* Stage cursor lock during block drag */
+.clip-stage.block-dragging,
+.clip-stage.block-dragging * {
+  cursor: inherit !important;
+}
+
+/* ── Resize handles ──────────────────────────────────────────────────── */
+.clip-resize-handle {
+  position: absolute;
+  z-index: 10;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 2px solid var(--clip-cyan-bright);
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  touch-action: none;
+}
+
+.clip-resize-handle--nw { top: -5px;            left: -5px;            cursor: nw-resize; }
+.clip-resize-handle--n  { top: -5px;            left: calc(50% - 5px); cursor: n-resize;  }
+.clip-resize-handle--ne { top: -5px;            right: -5px;           cursor: ne-resize; }
+.clip-resize-handle--e  { top: calc(50% - 5px); right: -5px;           cursor: e-resize;  }
+.clip-resize-handle--se { bottom: -5px;         right: -5px;           cursor: se-resize; }
+.clip-resize-handle--s  { bottom: -5px;         left: calc(50% - 5px); cursor: s-resize;  }
+.clip-resize-handle--sw { bottom: -5px;         left: -5px;            cursor: sw-resize; }
+.clip-resize-handle--w  { top: calc(50% - 5px); left: -5px;            cursor: w-resize;  }
 
 .clip-block.draft {
   z-index: 6;
@@ -5337,7 +5387,8 @@ main:has(.admin-layout) {
   box-shadow: 0 0 0 3px rgba(19, 217, 251, 0.24);
 }
 
-.clip-block.draft span {
+.clip-block.draft span,
+.clip-block.draft .clip-block-label {
   background: rgba(8, 145, 178, 0.94);
 }
 

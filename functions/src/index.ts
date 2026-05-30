@@ -15,7 +15,7 @@ const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const db = getFirestore();
 const bucket = getStorage().bucket();
 const maxPdfPages = Number(process.env.PAPERLOOP_MAX_PROCESSING_PAGES ?? 12);
-const blockModel = process.env.OPENAI_BLOCK_MODEL ?? "gpt-5.4-mini";
+const blockModel = process.env.OPENAI_BLOCK_MODEL ?? "gpt-4o";
 
 interface EditionRecord {
   id: string;
@@ -689,40 +689,56 @@ function languagePromptHint(language?: string): string {
 
 function buildBlockDetectionPrompt(language?: string): string {
   return [
-    "You are an expert newspaper layout analyst. Your task is to identify ALL distinct editorial blocks on this e-paper page image.",
+    "You are an expert newspaper layout analyst specializing in Indian regional e-papers.",
+    "Your task: identify ALL distinct editorial blocks on the page image and return their bounding boxes.",
     "",
     "=== LANGUAGE ===",
     languagePromptHint(language),
     "",
+    "=== STEP-BY-STEP APPROACH (follow this order) ===",
+    "1. SCAN THE PAGE STRUCTURE: Identify the column grid (typically 5–8 vertical columns in Indian dailies).",
+    "   Note where column rules (thin vertical lines) divide the page.",
+    "2. IDENTIFY BLOCK BOUNDARIES: Each editorial block occupies one or more complete columns.",
+    "   Horizontal rules, white gaps, or changes in font/background mark the top and bottom of each block.",
+    "3. MAP EVERY BLOCK: Working top-to-bottom, left-to-right, assign a bounding box to every distinct unit.",
+    "4. CHECK FOR OVERLAPS: Before finalising, verify that no two bounding boxes intersect.",
+    "   Adjust edges so adjacent blocks share a boundary without crossing.",
+    "",
     "=== WHAT TO DETECT ===",
-    "Detect every: news article, advertisement, standalone photograph with caption, boxed notice, and editorial box as a separate block.",
-    "Each block must represent exactly ONE self-contained editorial unit.",
+    "Detect every: news article (any size), advertisement, standalone photograph with caption, boxed notice, editorial/opinion box.",
+    "Each block = exactly ONE self-contained editorial unit.",
     "",
     "=== WHAT TO SKIP ===",
-    "Do NOT create blocks for: the masthead/nameplate, page number, publication date line, column separator rules, page margins, registration/crop marks, color calibration bars.",
+    "SKIP: masthead/nameplate, page number, publication date line, column rules, page margins, crop/registration marks, colour calibration bars.",
+    "These are decorative and must NOT become blocks.",
     "",
-    "=== BOUNDING BOX RULES (CRITICAL) ===",
-    "1. Coordinates are percentage values (0 to 100) relative to the full page image dimensions.",
-    "2. Every block must satisfy: x + width <= 100 AND y + height <= 100.",
-    "3. Draw the TIGHTEST possible rectangle that fully encloses the block — no excess whitespace.",
-    "4. STRICT NO-OVERLAP: Two blocks must NOT overlap each other. If block edges share a column rule, position them so their bounding boxes are adjacent but not intersecting.",
-    "5. Do NOT draw a large outer block that contains smaller inner blocks. If you see nested content, use separate non-overlapping blocks for each piece.",
-    "6. Every block must be at least 3% wide and 2% tall to be meaningful.",
+    "=== BOUNDING BOX RULES (NON-NEGOTIABLE) ===",
+    "• Coordinates are PERCENTAGE values 0–100, relative to the full page image (width and height).",
+    "• Constraint: x + width ≤ 100 AND y + height ≤ 100 for every block.",
+    "• Draw the TIGHTEST rectangle that fully encloses the content — trim margins and whitespace.",
+    "• ZERO OVERLAP: no two blocks may share any pixel area.",
+    "  If two blocks share a printed column rule, butt their edges to the rule centre-line.",
+    "• NEVER create a large 'container' block that wraps smaller blocks inside it.",
+    "• Minimum size: width ≥ 3% AND height ≥ 2%.",
     "",
     "=== NON-RECTANGULAR CONTENT ===",
-    "Articles sometimes wrap around an advertisement forming an L-shape or U-shape.",
-    "For these, split the article into 2 or 3 rectangular sub-regions that together cover the full article without overlapping the ad.",
-    "Use the same base label for all parts, e.g. 'Lead story – part 1' and 'Lead story – part 2'.",
-    "Each part is its own block entry.",
+    "When an article wraps around an advertisement (L-shape or U-shape):",
+    "  • Split the article into 2–3 non-overlapping rectangles that together cover its full text area.",
+    "  • Give each part the same label with a suffix: 'Lead story – part 1', 'Lead story – part 2'.",
+    "  • Each part is its own separate block entry.",
     "",
-    "=== COVERAGE ===",
-    "Try to cover all visible content — do not leave large text-filled regions undetected.",
-    "If uncertain about a region, still emit a block with lower confidence (0.4–0.6).",
+    "=== COVERAGE GOAL ===",
+    "Every text-filled area on the page must belong to exactly one block.",
+    "Large un-covered text regions are mistakes — add a block for them, even if you're uncertain (confidence 0.4).",
     "",
-    "=== OUTPUT ORDER & CONFIDENCE ===",
-    "Sort blocks in natural reading order: top-to-bottom, left-to-right.",
-    "Confidence: 0.85–1.0 for clearly distinct, well-bounded blocks; 0.5–0.84 for somewhat uncertain; 0.3–0.49 for guesses.",
-    "Keep body text to 1–3 sentences; editors will correct OCR manually.",
+    "=== CONFIDENCE SCORING ===",
+    "0.9–1.0: perfectly visible block boundary, no ambiguity.",
+    "0.7–0.89: boundary is clear but minor uncertainty on one edge.",
+    "0.5–0.69: block likely correct but one or more edges are estimated.",
+    "0.3–0.49: heavily uncertain — block may be wrong.",
+    "",
+    "Output blocks sorted top-to-bottom, left-to-right (reading order).",
+    "Keep body text to 1–3 sentences — editors will review OCR manually.",
   ].join("\n");
 }
 
@@ -827,7 +843,7 @@ function computeIoU(a: SuggestedBlock, b: SuggestedBlock): number {
  * This removes redundant / duplicate overlapping detections while preserving the
  * highest-confidence block in each overlapping cluster.
  */
-function suppressOverlaps(blocks: SuggestedBlock[], iouThreshold = 0.15): SuggestedBlock[] {
+function suppressOverlaps(blocks: SuggestedBlock[], iouThreshold = 0.12): SuggestedBlock[] {
   const sorted = [...blocks].sort((a, b) => b.confidence - a.confidence);
   const kept: SuggestedBlock[] = [];
 
