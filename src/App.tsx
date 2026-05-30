@@ -1443,6 +1443,10 @@ function CityFeedPostCard({
   articleCity,
   onOpen,
 }: CityFeedPostCardProps) {
+  const likes = article.stats.likes ?? 0;
+  const comments = Math.max(article.stats.comments, article.comments.length);
+  const shares = article.stats.shares;
+
   return (
     <article className="feed-post">
       <header className="feed-post-header">
@@ -1453,6 +1457,11 @@ function CityFeedPostCard({
             {edition?.date ?? publisher.latestEditionDate} • {article.section}
             {articleCity ? ` • ${articleCity}` : ""}
           </span>
+        </div>
+        <div className="feed-post-impressions">
+          <Eye size={14} />
+          <span>{article.stats.views.toLocaleString()}</span>
+          <small>impressions</small>
         </div>
       </header>
 
@@ -1474,37 +1483,27 @@ function CityFeedPostCard({
         )}
       </button>
 
-      <div className="feed-post-stats">
-        <span>
-          <Eye size={14} />
-          {article.stats.views.toLocaleString()} impressions
-        </span>
-        <span>
-          <Heart size={14} />
-          {(article.stats.likes ?? 0).toLocaleString()} likes
-        </span>
-        <span>
-          <MessageCircle size={14} />
-          {article.stats.comments} comments
-        </span>
-        <span>
-          <Share2 size={14} />
-          {article.stats.shares.toLocaleString()} shares
-        </span>
-      </div>
-
       <div className="feed-post-actions">
         <button type="button" onClick={() => onOpen(article.id)}>
           <Heart size={18} />
-          Like
+          <span className="feed-post-action-label">Like</span>
+          {likes > 0 && (
+            <span className="feed-post-action-count">{likes.toLocaleString()}</span>
+          )}
         </button>
         <button type="button" onClick={() => onOpen(article.id)}>
           <MessageCircle size={18} />
-          Comment
+          <span className="feed-post-action-label">Comment</span>
+          {comments > 0 && (
+            <span className="feed-post-action-count">{comments.toLocaleString()}</span>
+          )}
         </button>
         <button type="button" onClick={() => onOpen(article.id)}>
           <Share2 size={18} />
-          Share
+          <span className="feed-post-action-label">Share</span>
+          {shares > 0 && (
+            <span className="feed-post-action-count">{shares.toLocaleString()}</span>
+          )}
         </button>
       </div>
     </article>
@@ -1530,109 +1529,200 @@ function getReadablePageArticles(
   );
 }
 
-interface ReaderPageClipsPanelProps {
+interface ReaderSidebarPanelProps {
   paperViewOpen: boolean;
   publisher: Publisher;
   edition: Edition;
   pageIndex: number;
   articles: ArticlePost[];
+  publishers: Publisher[];
   profile: UserProfile | null;
   userAccess: UserAccess;
   onOpenArticle: (articleId: string) => void;
-  onReadEdition: () => void;
+  onReadEdition: (publisherId: string) => void;
+  onSelectPublisher: (publisherId: string) => void;
 }
 
-function ReaderPageClipsPanel({
+function ReaderSidebarPanel({
   paperViewOpen,
   publisher,
   edition,
   pageIndex,
   articles,
+  publishers,
   profile,
   userAccess,
   onOpenArticle,
   onReadEdition,
-}: ReaderPageClipsPanelProps) {
+  onSelectPublisher,
+}: ReaderSidebarPanelProps) {
   const page = edition.pages[pageIndex] ?? edition.pages[0];
   const pageArticles = useMemo(
     () => getReadablePageArticles(articles, edition, page, profile, userAccess),
     [articles, edition, page, profile, userAccess],
   );
-
-  if (!paperViewOpen) {
-    return (
-      <>
-        <div className="section-heading compact">
-          <span className="eyebrow">Page clips</span>
-          <h2>Stories on each page</h2>
-          <p>Open an edition to browse clipped stories page by page.</p>
-        </div>
-        <button type="button" className="reader-page-clips-open-edition" onClick={onReadEdition}>
-          <BookOpen size={16} />
-          Read {publisher.name}
-        </button>
-      </>
-    );
-  }
+  const popularTags = useMemo(
+    () => buildPopularTags(articles, publishers),
+    [articles, publishers],
+  );
+  const trendingPublishers = useMemo(
+    () => [...publishers].sort((left, right) => socialRankScore(right) - socialRankScore(left)).slice(0, 5),
+    [publishers],
+  );
 
   return (
     <>
-      <div className="section-heading compact">
-        <span className="eyebrow">{publisher.name}</span>
-        <h2>
-          Page {page?.pageNumber ?? pageIndex + 1} clips
-        </h2>
-        <p>
-          {page?.section ? `${page.section} • ` : ""}
-          {pageArticles.length} {pageArticles.length === 1 ? "story" : "stories"} on this page
-        </p>
-      </div>
-
-      <div className="reader-page-clips-list">
-        {pageArticles.length === 0 ? (
-          <p className="empty-state">No clipped stories on this page yet.</p>
+      <section className="reader-sidebar-section reader-popular-tags-section">
+        <div className="section-heading compact">
+          <span className="eyebrow">Trending topics</span>
+          <h2>Popular tags</h2>
+        </div>
+        {popularTags.length === 0 ? (
+          <p className="empty-state">Tags will appear as more stories are published.</p>
         ) : (
-          pageArticles.map((article) => (
+          <div className="reader-popular-tags-list">
+            {popularTags.map(({ tag, count }) => (
+              <span className="reader-popular-tag" key={tag}>
+                #{tag.replace(/\s+/g, "")}
+                <small>{count.toLocaleString()}</small>
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="reader-sidebar-section reader-trending-section">
+        <div className="section-heading compact">
+          <span className="eyebrow">Most followed</span>
+          <h2>Trending newspapers</h2>
+        </div>
+        <div className="publisher-sidebar-list reader-trending-list">
+          {trendingPublishers.length === 0 ? (
+            <p className="empty-state">No newspapers match these filters yet.</p>
+          ) : (
+            trendingPublishers.map((item, index) => (
+              <article
+                className={`publisher-sidebar-card${item.id === publisher.id ? " active" : ""}`}
+                key={item.id}
+              >
+                <div className="publisher-sidebar-card-head">
+                  <button
+                    type="button"
+                    className="publisher-sidebar-main"
+                    onClick={() => onSelectPublisher(item.id)}
+                  >
+                    <div className="publisher-logo">{item.logo}</div>
+                    <div className="publisher-sidebar-copy">
+                      <div className="publisher-sidebar-title-row">
+                        <strong>{item.name}</strong>
+                        {item.isLeading && (
+                          <span className="publisher-sidebar-badge">
+                            <TrendingUp size={12} />
+                            Trending
+                          </span>
+                        )}
+                      </div>
+                      <span>
+                        {item.city} • {item.language}
+                      </span>
+                      <small>
+                        <Users size={12} />
+                        {compactNumber(item.subscriberCount)} followers
+                      </small>
+                    </div>
+                  </button>
+                  <span className="publisher-sidebar-rank">#{index + 1}</span>
+                </div>
+                <button
+                  type="button"
+                  className="publisher-sidebar-read"
+                  onClick={() => onReadEdition(item.id)}
+                >
+                  <BookOpen size={16} />
+                  Read edition
+                </button>
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="reader-sidebar-section reader-page-clips-section">
+        {paperViewOpen ? (
+          <>
+            <div className="section-heading compact">
+              <span className="eyebrow">{publisher.name}</span>
+              <h2>Page {page?.pageNumber ?? pageIndex + 1} clips</h2>
+              <p>
+                {page?.section ? `${page.section} • ` : ""}
+                {pageArticles.length} {pageArticles.length === 1 ? "story" : "stories"} on this page
+              </p>
+            </div>
+
+            <div className="reader-page-clips-list">
+              {pageArticles.length === 0 ? (
+                <p className="empty-state">No clipped stories on this page yet.</p>
+              ) : (
+                pageArticles.map((article) => (
+                  <button
+                    type="button"
+                    className="reader-page-clip-card"
+                    key={article.id}
+                    onClick={() => onOpenArticle(article.id)}
+                  >
+                    {article.clippedImageUrl ? (
+                      <figure className="reader-page-clip-image">
+                        <img src={article.clippedImageUrl} alt={article.title} />
+                      </figure>
+                    ) : (
+                      <div
+                        className={`reader-page-clip-image placeholder clip-visual ${article.clippedImageTone}`}
+                      >
+                        <span>{article.section}</span>
+                      </div>
+                    )}
+                    <div className="reader-page-clip-copy">
+                      <span>{article.section}</span>
+                      <strong>{article.title}</strong>
+                      <p>{article.summary}</p>
+                      <div className="reader-page-clip-metrics">
+                        <span>
+                          <Eye size={12} />
+                          {article.stats.views.toLocaleString()}
+                        </span>
+                        <span>
+                          <Heart size={12} />
+                          {(article.stats.likes ?? 0).toLocaleString()}
+                        </span>
+                        <span>
+                          <MessageCircle size={12} />
+                          {Math.max(article.stats.comments, article.comments.length)}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="section-heading compact">
+              <span className="eyebrow">Page clips</span>
+              <h2>Stories on each page</h2>
+              <p>Open an edition to browse clipped stories page by page.</p>
+            </div>
             <button
               type="button"
-              className="reader-page-clip-card"
-              key={article.id}
-              onClick={() => onOpenArticle(article.id)}
+              className="reader-page-clips-open-edition"
+              onClick={() => onReadEdition(publisher.id)}
             >
-              {article.clippedImageUrl ? (
-                <figure className="reader-page-clip-image">
-                  <img src={article.clippedImageUrl} alt={article.title} />
-                </figure>
-              ) : (
-                <div
-                  className={`reader-page-clip-image placeholder clip-visual ${article.clippedImageTone}`}
-                >
-                  <span>{article.section}</span>
-                </div>
-              )}
-              <div className="reader-page-clip-copy">
-                <span>{article.section}</span>
-                <strong>{article.title}</strong>
-                <p>{article.summary}</p>
-                <div className="reader-page-clip-metrics">
-                  <span>
-                    <Eye size={12} />
-                    {article.stats.views.toLocaleString()}
-                  </span>
-                  <span>
-                    <Heart size={12} />
-                    {(article.stats.likes ?? 0).toLocaleString()}
-                  </span>
-                  <span>
-                    <MessageCircle size={12} />
-                    {Math.max(article.stats.comments, article.comments.length)}
-                  </span>
-                </div>
-              </div>
+              <BookOpen size={16} />
+              Read {publisher.name}
             </button>
-          ))
+          </>
         )}
-      </div>
+      </section>
     </>
   );
 }
@@ -2393,6 +2483,7 @@ function ReaderView({
   onReaderLanguage,
   onReaderState,
   onReaderCity,
+  onSelectPublisher,
   onPageIndex,
   onZoom,
   onReaderMode,
@@ -2428,7 +2519,12 @@ function ReaderView({
       userAccess,
     ],
   );
-  function handleReadEdition() {
+  const sidebarPublishers = useMemo(
+    () => filterPublishersByLocale(publishers, editionLocations, localeFilters),
+    [editionLocations, localeFilters, publishers],
+  );
+  function handleReadEdition(publisherId: string) {
+    onSelectPublisher(publisherId);
     onPaperViewOpenChange(true);
   }
 
@@ -2545,16 +2641,18 @@ function ReaderView({
         </div>
 
         <aside className="reader-posts-panel reader-page-clips-panel">
-          <ReaderPageClipsPanel
+          <ReaderSidebarPanel
             paperViewOpen={paperViewOpen}
             publisher={publisher}
             edition={edition}
             pageIndex={pageIndex}
             articles={articles}
+            publishers={sidebarPublishers}
             profile={profile}
             userAccess={userAccess}
             onOpenArticle={onOpenArticle}
             onReadEdition={handleReadEdition}
+            onSelectPublisher={onSelectPublisher}
           />
         </aside>
       </div>
@@ -3957,6 +4055,39 @@ function formatActivityDate(value: unknown) {
 
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function buildPopularTags(
+  articles: ArticlePost[],
+  publishers: Publisher[],
+  limit = 12,
+) {
+  const counts = new Map<string, number>();
+
+  articles.forEach((article) => {
+    (article.tags ?? []).forEach((tag) => {
+      const normalized = tag.trim();
+      if (normalized) {
+        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+      }
+    });
+
+    if (article.section?.trim()) {
+      const section = article.section.trim();
+      counts.set(section, (counts.get(section) ?? 0) + 1);
+    }
+  });
+
+  publishers.forEach((publisher) => {
+    publisher.topics.forEach((topic) => {
+      counts.set(topic, (counts.get(topic) ?? 0) + 2);
+    });
+  });
+
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([tag, count]) => ({ tag, count }));
 }
 
 function socialRankScore(publisher: Publisher) {
