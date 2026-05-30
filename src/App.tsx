@@ -177,6 +177,7 @@ type View = "dashboard" | "reader" | "article" | "admin";
 
 const EDITION_STUDIO_PATH = "/admin/edition-studio";
 const EDITION_STUDIO_CONTEXT_KEY = "paperloop.editionStudioContext";
+const READER_NEWSPAPER_EDITION_PATH = "/reader/newspaper/edition";
 
 function activeViewFromPath(pathname: string): View {
   if (pathname.startsWith("/admin")) {
@@ -414,7 +415,7 @@ function articleBackNavigationTarget(
   }
 
   return {
-    path: "/reader",
+    path: newspaperReaderPathForArticle(article.id),
     label: `Back to e-paper page ${article.pageNumber}`,
   };
 }
@@ -424,10 +425,38 @@ function samePublisherId(left: string, right: string) {
     right.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
+function resolveReaderPageIndex(article: ArticlePost, edition: Edition | undefined) {
+  if (!edition) {
+    return Math.max(0, article.pageNumber - 1);
+  }
+
+  const pageIndexById = edition.pages.findIndex((page) => page.id === article.pageId);
+
+  if (pageIndexById >= 0) {
+    return pageIndexById;
+  }
+
+  const pageIndexByNumber = edition.pages.findIndex(
+    (page) => page.pageNumber === article.pageNumber,
+  );
+
+  return pageIndexByNumber >= 0 ? pageIndexByNumber : Math.max(0, article.pageNumber - 1);
+}
+
+function newspaperReaderPathForArticle(articleId: string) {
+  return `/reader/newspaper/${articleId}`;
+}
+
+function newspaperReaderPathForEdition(editionId: string, pageIndex = 0) {
+  const basePath = `${READER_NEWSPAPER_EDITION_PATH}/${editionId}`;
+  return pageIndex > 0 ? `${basePath}?page=${pageIndex}` : basePath;
+}
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const activeView = activeViewFromPath(location.pathname);
+  const isNewspaperReaderRoute = location.pathname.startsWith("/reader/newspaper");
   const [selectedPublisherId, setSelectedPublisherId] = useState(
     mockContent.publishers[0].id,
   );
@@ -450,7 +479,6 @@ function App() {
   const [readerState, setReaderState] = useState("All");
   const [readerCity, setReaderCity] = useState("All");
   const [pageIndex, setPageIndex] = useState(0);
-  const [readerPaperViewOpen, setReaderPaperViewOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [readerMode, setReaderMode] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
@@ -691,8 +719,8 @@ function App() {
   useEffect(() => {
     if (
       activeView !== "reader" ||
-      readerFilteredPublishers.length === 0 ||
-      readerPaperViewOpen
+      isNewspaperReaderRoute ||
+      readerFilteredPublishers.length === 0
     ) {
       return;
     }
@@ -726,52 +754,101 @@ function App() {
   }, [
     activeView,
     editions,
+    isNewspaperReaderRoute,
     preferredReaderEdition,
     readerFilteredPublishers,
     selectedEdition,
     selectedEditionId,
     selectedPublisherId,
-    readerPaperViewOpen,
   ]);
 
-  function resolveReaderPageIndex(article: ArticlePost, edition: Edition | undefined) {
-    if (!edition) {
-      return Math.max(0, article.pageNumber - 1);
-    }
-
-    const pageIndexById = edition.pages.findIndex((page) => page.id === article.pageId);
-
-    if (pageIndexById >= 0) {
-      return pageIndexById;
-    }
-
-    const pageIndexByNumber = edition.pages.findIndex(
-      (page) => page.pageNumber === article.pageNumber,
-    );
-
-    return pageIndexByNumber >= 0 ? pageIndexByNumber : Math.max(0, article.pageNumber - 1);
+  function applyNewspaperReaderContext(
+    publisher: Publisher,
+    edition: Edition | undefined,
+    nextPageIndex: number,
+  ) {
+    setReaderLanguage(publisher.language);
+    setReaderState(publisherStateName(publisher, editionLocations));
+    setReaderCity(publisher.city);
+    setSelectedPublisherId(publisher.id);
+    setSelectedEditionId(edition?.id ?? "");
+    setPageIndex(nextPageIndex);
   }
 
   function openReader(publisher: Publisher, article?: ArticlePost) {
     const publisherEditionsForReader = editions
       .filter((edition) => edition.publisherId === publisher.id)
       .sort(compareEditionsForReader);
-    const targetEdition = article
-      ? editions.find((edition) => edition.id === article.editionId) ??
-        publisherEditionsForReader[0]
-      : publisherEditionsForReader[0];
-    const targetPageIndex = article
-      ? resolveReaderPageIndex(article, targetEdition)
-      : 0;
 
-    setReaderLanguage(publisher.language);
-    setReaderState(publisherStateName(publisher, editionLocations));
-    setReaderCity(publisher.city);
-    setSelectedPublisherId(publisher.id);
-    setSelectedEditionId(targetEdition?.id ?? "");
-    setPageIndex(targetPageIndex);
-    setReaderPaperViewOpen(Boolean(article));
+    if (article) {
+      const targetEdition =
+        editions.find((edition) => edition.id === article.editionId) ??
+        publisherEditionsForReader[0];
+      const targetPageIndex = resolveReaderPageIndex(article, targetEdition);
+
+      applyNewspaperReaderContext(publisher, targetEdition, targetPageIndex);
+      navigate(newspaperReaderPathForArticle(article.id));
+      return;
+    }
+
+    applyNewspaperReaderContext(publisher, publisherEditionsForReader[0], 0);
     navigate("/reader");
+  }
+
+  function openNewspaperEdition(editionId: string, nextPageIndex = 0) {
+    const targetEdition = editions.find((edition) => edition.id === editionId);
+    const publisher = publishers.find((item) => item.id === targetEdition?.publisherId);
+
+    if (!targetEdition || !publisher) {
+      navigate("/reader");
+      return;
+    }
+
+    applyNewspaperReaderContext(publisher, targetEdition, nextPageIndex);
+    navigate(newspaperReaderPathForEdition(editionId, nextPageIndex));
+  }
+
+  function openNewspaperEditionForPublisher(publisherId: string) {
+    const publisherEditionsForReader = editions
+      .filter((edition) => edition.publisherId === publisherId)
+      .sort(compareEditionsForReader);
+    const targetEdition = publisherEditionsForReader[0];
+
+    if (!targetEdition) {
+      navigate("/reader");
+      return;
+    }
+
+    openNewspaperEdition(targetEdition.id);
+  }
+
+  function syncNewspaperReaderFromArticle(article: ArticlePost) {
+    const publisher = publishers.find((item) => item.id === article.publisherId);
+
+    if (!publisher) {
+      return;
+    }
+
+    const publisherEditionsForReader = editions
+      .filter((edition) => edition.publisherId === publisher.id)
+      .sort(compareEditionsForReader);
+    const targetEdition =
+      editions.find((edition) => edition.id === article.editionId) ??
+      publisherEditionsForReader[0];
+    const targetPageIndex = resolveReaderPageIndex(article, targetEdition);
+
+    applyNewspaperReaderContext(publisher, targetEdition, targetPageIndex);
+  }
+
+  function syncNewspaperReaderFromEdition(editionId: string, nextPageIndex = 0) {
+    const targetEdition = editions.find((edition) => edition.id === editionId);
+    const publisher = publishers.find((item) => item.id === targetEdition?.publisherId);
+
+    if (!targetEdition || !publisher) {
+      return;
+    }
+
+    applyNewspaperReaderContext(publisher, targetEdition, nextPageIndex);
   }
 
   function navigateToView(view: View) {
@@ -791,7 +868,6 @@ function App() {
         navigate(EDITION_STUDIO_PATH);
         break;
       case "reader":
-        setReaderPaperViewOpen(false);
         navigate("/reader");
         break;
       case "article":
@@ -911,7 +987,6 @@ function App() {
                 editionLocations={editionLocations}
                 publisher={selectedPublisher}
                 edition={selectedEdition}
-                editions={publisherEditions}
                 readerLanguage={readerLanguage}
                 readerState={readerState}
                 readerCity={readerCity}
@@ -919,22 +994,68 @@ function App() {
                 readerStateOptions={readerStateOptions}
                 readerCityOptions={readerCityOptions}
                 pageIndex={pageIndex}
-                zoom={zoom}
-                readerMode={readerMode}
-                paperViewOpen={readerPaperViewOpen}
-                onPaperViewOpenChange={setReaderPaperViewOpen}
                 onReaderLanguage={setReaderLanguage}
                 onReaderState={handleReaderStateChange}
                 onReaderCity={setReaderCity}
                 onSelectPublisher={selectReaderPublisher}
+                onOpenArticle={openArticle}
+                onReadEdition={openNewspaperEditionForPublisher}
+              />
+            }
+          />
+          <Route
+            path={`${READER_NEWSPAPER_EDITION_PATH}/:editionId`}
+            element={
+              <NewspaperReaderRoute
+                articles={articles}
+                publishers={publishers}
+                editions={editions}
+                profile={profile}
+                userAccess={userAccess}
+                publisher={selectedPublisher}
+                edition={selectedEdition}
+                publisherEditions={publisherEditions}
+                pageIndex={pageIndex}
+                zoom={zoom}
+                readerMode={readerMode}
+                onPageIndex={setPageIndex}
+                onZoom={setZoom}
+                onReaderMode={setReaderMode}
                 onEditionId={(editionId) => {
                   setSelectedEditionId(editionId);
                   setPageIndex(0);
                 }}
+                onOpenArticle={openArticle}
+                onSyncFromArticle={syncNewspaperReaderFromArticle}
+                onSyncFromEdition={syncNewspaperReaderFromEdition}
+              />
+            }
+          />
+          <Route
+            path="/reader/newspaper/:articleId"
+            element={
+              <NewspaperReaderRoute
+                articles={articles}
+                publishers={publishers}
+                editions={editions}
+                profile={profile}
+                userAccess={userAccess}
+                publisher={selectedPublisher}
+                edition={selectedEdition}
+                publisherEditions={publisherEditions}
+                pageIndex={pageIndex}
+                zoom={zoom}
+                readerMode={readerMode}
                 onPageIndex={setPageIndex}
                 onZoom={setZoom}
                 onReaderMode={setReaderMode}
+                onEditionId={(editionId) => {
+                  setSelectedEditionId(editionId);
+                  setPageIndex(0);
+                }}
                 onOpenArticle={openArticle}
+                onSyncFromArticle={syncNewspaperReaderFromArticle}
+                onSyncFromEdition={syncNewspaperReaderFromEdition}
               />
             }
           />
@@ -1405,7 +1526,6 @@ interface ReaderViewProps {
   editionLocations: EditionLocation[];
   publisher: Publisher;
   edition: Edition;
-  editions: Edition[];
   readerLanguage: string;
   readerState: string;
   readerCity: string;
@@ -1413,19 +1533,12 @@ interface ReaderViewProps {
   readerStateOptions: string[];
   readerCityOptions: string[];
   pageIndex: number;
-  zoom: number;
-  readerMode: boolean;
-  paperViewOpen: boolean;
-  onPaperViewOpenChange: (open: boolean) => void;
   onReaderLanguage: (value: string) => void;
   onReaderState: (value: string) => void;
   onReaderCity: (value: string) => void;
   onSelectPublisher: (publisherId: string) => void;
-  onPageIndex: (value: number) => void;
-  onZoom: (value: number) => void;
-  onReaderMode: (value: boolean) => void;
-  onEditionId: (value: string) => void;
   onOpenArticle: (articleId: string) => void;
+  onReadEdition: (publisherId: string) => void;
 }
 
 interface CityFeedPostCardProps {
@@ -1531,6 +1644,7 @@ function getReadablePageArticles(
 
 interface ReaderSidebarPanelProps {
   paperViewOpen: boolean;
+  clipsOnly?: boolean;
   publisher: Publisher;
   edition: Edition;
   pageIndex: number;
@@ -1545,6 +1659,7 @@ interface ReaderSidebarPanelProps {
 
 function ReaderSidebarPanel({
   paperViewOpen,
+  clipsOnly = false,
   publisher,
   edition,
   pageIndex,
@@ -1569,86 +1684,91 @@ function ReaderSidebarPanel({
     () => [...publishers].sort((left, right) => socialRankScore(right) - socialRankScore(left)).slice(0, 5),
     [publishers],
   );
+  const showPageClips = clipsOnly || paperViewOpen;
 
   return (
     <>
-      <section className="reader-sidebar-section reader-popular-tags-section">
-        <div className="section-heading compact">
-          <span className="eyebrow">Trending topics</span>
-          <h2>Popular tags</h2>
-        </div>
-        {popularTags.length === 0 ? (
-          <p className="empty-state">Tags will appear as more stories are published.</p>
-        ) : (
-          <div className="reader-popular-tags-list">
-            {popularTags.map(({ tag, count }) => (
-              <span className="reader-popular-tag" key={tag}>
-                #{tag.replace(/\s+/g, "")}
-                <small>{count.toLocaleString()}</small>
-              </span>
-            ))}
-          </div>
-        )}
-      </section>
+      {!clipsOnly ? (
+        <>
+          <section className="reader-sidebar-section reader-popular-tags-section">
+            <div className="section-heading compact">
+              <span className="eyebrow">Trending topics</span>
+              <h2>Popular tags</h2>
+            </div>
+            {popularTags.length === 0 ? (
+              <p className="empty-state">Tags will appear as more stories are published.</p>
+            ) : (
+              <div className="reader-popular-tags-list">
+                {popularTags.map(({ tag, count }) => (
+                  <span className="reader-popular-tag" key={tag}>
+                    #{tag.replace(/\s+/g, "")}
+                    <small>{count.toLocaleString()}</small>
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
 
-      <section className="reader-sidebar-section reader-trending-section">
-        <div className="section-heading compact">
-          <span className="eyebrow">Most followed</span>
-          <h2>Trending newspapers</h2>
-        </div>
-        <div className="publisher-sidebar-list reader-trending-list">
-          {trendingPublishers.length === 0 ? (
-            <p className="empty-state">No newspapers match these filters yet.</p>
-          ) : (
-            trendingPublishers.map((item, index) => (
-              <article
-                className={`publisher-sidebar-card${item.id === publisher.id ? " active" : ""}`}
-                key={item.id}
-              >
-                <div className="publisher-sidebar-card-head">
-                  <button
-                    type="button"
-                    className="publisher-sidebar-main"
-                    onClick={() => onSelectPublisher(item.id)}
+          <section className="reader-sidebar-section reader-trending-section">
+            <div className="section-heading compact">
+              <span className="eyebrow">Most followed</span>
+              <h2>Trending newspapers</h2>
+            </div>
+            <div className="publisher-sidebar-list reader-trending-list">
+              {trendingPublishers.length === 0 ? (
+                <p className="empty-state">No newspapers match these filters yet.</p>
+              ) : (
+                trendingPublishers.map((item, index) => (
+                  <article
+                    className={`publisher-sidebar-card${item.id === publisher.id ? " active" : ""}`}
+                    key={item.id}
                   >
-                    <div className="publisher-logo">{item.logo}</div>
-                    <div className="publisher-sidebar-copy">
-                      <div className="publisher-sidebar-title-row">
-                        <strong>{item.name}</strong>
-                        {item.isLeading && (
-                          <span className="publisher-sidebar-badge">
-                            <TrendingUp size={12} />
-                            Trending
+                    <div className="publisher-sidebar-card-head">
+                      <button
+                        type="button"
+                        className="publisher-sidebar-main"
+                        onClick={() => onSelectPublisher(item.id)}
+                      >
+                        <div className="publisher-logo">{item.logo}</div>
+                        <div className="publisher-sidebar-copy">
+                          <div className="publisher-sidebar-title-row">
+                            <strong>{item.name}</strong>
+                            {item.isLeading && (
+                              <span className="publisher-sidebar-badge">
+                                <TrendingUp size={12} />
+                                Trending
+                              </span>
+                            )}
+                          </div>
+                          <span>
+                            {item.city} • {item.language}
                           </span>
-                        )}
-                      </div>
-                      <span>
-                        {item.city} • {item.language}
-                      </span>
-                      <small>
-                        <Users size={12} />
-                        {compactNumber(item.subscriberCount)} followers
-                      </small>
+                          <small>
+                            <Users size={12} />
+                            {compactNumber(item.subscriberCount)} followers
+                          </small>
+                        </div>
+                      </button>
+                      <span className="publisher-sidebar-rank">#{index + 1}</span>
                     </div>
-                  </button>
-                  <span className="publisher-sidebar-rank">#{index + 1}</span>
-                </div>
-                <button
-                  type="button"
-                  className="publisher-sidebar-read"
-                  onClick={() => onReadEdition(item.id)}
-                >
-                  <BookOpen size={16} />
-                  Read edition
-                </button>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
+                    <button
+                      type="button"
+                      className="publisher-sidebar-read"
+                      onClick={() => onReadEdition(item.id)}
+                    >
+                      <BookOpen size={16} />
+                      Read edition
+                    </button>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
 
       <section className="reader-sidebar-section reader-page-clips-section">
-        {paperViewOpen ? (
+        {showPageClips ? (
           <>
             <div className="section-heading compact">
               <span className="eyebrow">{publisher.name}</span>
@@ -2217,6 +2337,61 @@ function ReaderPageThumbnailCarousel({
   );
 }
 
+interface ReaderEditionBarProps {
+  publisher: Publisher;
+  edition: Edition;
+  editions: Edition[];
+  onEditionId: (value: string) => void;
+  variant?: "panel" | "topbar";
+}
+
+function ReaderEditionBar({
+  publisher,
+  edition,
+  editions,
+  onEditionId,
+  variant = "panel",
+}: ReaderEditionBarProps) {
+  const editionSelect = (
+    <label className="edition-select compact reader-edition-select">
+      <span className="sr-only">Edition</span>
+      <select value={edition.id} onChange={(event) => onEditionId(event.target.value)}>
+        {editions.length === 0 ? (
+          <option value={edition.id}>{edition.date}</option>
+        ) : (
+          editions.map((publisherEdition) => (
+            <option key={publisherEdition.id} value={publisherEdition.id}>
+              {publisherEdition.date} • {formatRole(publisherEdition.status)}
+            </option>
+          ))
+        )}
+      </select>
+    </label>
+  );
+
+  if (variant === "topbar") {
+    return (
+      <div className="reader-edition-topbar">
+        <div className="reader-edition-topbar-publisher">
+          <strong>{publisher.name}</strong>
+        </div>
+        <div className="reader-edition-topbar-select">{editionSelect}</div>
+        <span className="reader-edition-topbar-date">{edition.date}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="reader-edition-bar">
+      <div className="reader-edition-meta">
+        <strong>{publisher.name}</strong>
+        <span>{edition.date}</span>
+      </div>
+      {editionSelect}
+    </div>
+  );
+}
+
 interface ReaderPaperPanelProps {
   articles: ArticlePost[];
   profile: UserProfile | null;
@@ -2227,6 +2402,7 @@ interface ReaderPaperPanelProps {
   pageIndex: number;
   zoom: number;
   readerMode: boolean;
+  showEditionBar?: boolean;
   onPageIndex: (value: number) => void;
   onZoom: (value: number) => void;
   onReaderMode: (value: boolean) => void;
@@ -2244,6 +2420,7 @@ function ReaderPaperPanel({
   pageIndex,
   zoom,
   readerMode,
+  showEditionBar = true,
   onPageIndex,
   onZoom,
   onReaderMode,
@@ -2289,30 +2466,14 @@ function ReaderPaperPanel({
 
   return (
     <>
-      <div className="reader-edition-bar">
-        <div className="reader-edition-meta">
-          <strong>{publisher.name}</strong>
-          <span>{edition.date}</span>
-        </div>
-
-        <label className="edition-select compact reader-edition-select">
-          <span className="sr-only">Edition</span>
-          <select
-            value={edition.id}
-            onChange={(event) => onEditionId(event.target.value)}
-          >
-            {editions.length === 0 ? (
-              <option value={edition.id}>{edition.date}</option>
-            ) : (
-              editions.map((publisherEdition) => (
-                <option key={publisherEdition.id} value={publisherEdition.id}>
-                  {publisherEdition.date} • {formatRole(publisherEdition.status)}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-      </div>
+      {showEditionBar ? (
+        <ReaderEditionBar
+          publisher={publisher}
+          edition={edition}
+          editions={editions}
+          onEditionId={onEditionId}
+        />
+      ) : null}
 
       <ReaderPageThumbnailCarousel
         pages={edition.pages}
@@ -2468,7 +2629,6 @@ function ReaderView({
   editionLocations,
   publisher,
   edition,
-  editions,
   readerLanguage,
   readerState,
   readerCity,
@@ -2476,19 +2636,12 @@ function ReaderView({
   readerStateOptions,
   readerCityOptions,
   pageIndex,
-  zoom,
-  readerMode,
-  paperViewOpen,
-  onPaperViewOpenChange,
   onReaderLanguage,
   onReaderState,
   onReaderCity,
   onSelectPublisher,
-  onPageIndex,
-  onZoom,
-  onReaderMode,
-  onEditionId,
   onOpenArticle,
+  onReadEdition,
 }: ReaderViewProps) {
   const localeFilters = useMemo(
     () => ({
@@ -2524,23 +2677,12 @@ function ReaderView({
     [editionLocations, localeFilters, publishers],
   );
   function handleReadEdition(publisherId: string) {
-    onSelectPublisher(publisherId);
-    onPaperViewOpenChange(true);
+    onReadEdition(publisherId);
   }
 
   return (
     <section className="reader-layout">
       <div className="reader-filter-bar">
-        {paperViewOpen ? (
-          <button
-            type="button"
-            className="back-button reader-filter-back"
-            onClick={() => onPaperViewOpenChange(false)}
-          >
-            <ArrowLeft size={18} />
-            Back to feed
-          </button>
-        ) : null}
         <SelectFilter
           compact
           icon={<Filter size={14} />}
@@ -2570,79 +2712,58 @@ function ReaderView({
 
       <div className="reader-workspace">
         <div className="reader-main">
-          {paperViewOpen ? (
-            <ReaderPaperPanel
-              articles={articles}
-              profile={profile}
-              userAccess={userAccess}
-                publisher={publisher}
-                edition={edition}
-                editions={editions}
-                pageIndex={pageIndex}
-                zoom={zoom}
-                readerMode={readerMode}
-                onPageIndex={onPageIndex}
-                onZoom={onZoom}
-                onReaderMode={onReaderMode}
-                onEditionId={onEditionId}
-              onOpenArticle={onOpenArticle}
-            />
-          ) : (
-            <>
-              <div className="city-feed">
-                {cityFeedArticles.length === 0 ? (
-                  <div className="empty-article-card feed-empty">
-                    <Sparkles size={20} />
-                    <strong>No city clips yet</strong>
-                    <p>
-                      Try another city filter or open a story below to read today&apos;s
-                      edition page by page.
-                    </p>
-                  </div>
-                ) : (
-                  cityFeedArticles.map((article) => {
-                    const articlePublisher =
-                      publishers.find((item) => item.id === article.publisherId) ??
-                      publisher;
-                    const articleEdition = allEditions.find(
-                      (item) => item.id === article.editionId,
-                    );
-
-                    return (
-                      <CityFeedPostCard
-                        key={article.id}
-                        article={article}
-                        publisher={articlePublisher}
-                        edition={articleEdition}
-                        articleCity={resolveArticleCity(
-                          article,
-                          allEditions,
-                          publishers,
-                        )}
-                        onOpen={onOpenArticle}
-                      />
-                    );
-                  })
-                )}
+          <div className="city-feed">
+            {cityFeedArticles.length === 0 ? (
+              <div className="empty-article-card feed-empty">
+                <Sparkles size={20} />
+                <strong>No city clips yet</strong>
+                <p>
+                  Try another city filter or open a story below to read today&apos;s
+                  edition page by page.
+                </p>
               </div>
+            ) : (
+              cityFeedArticles.map((article) => {
+                const articlePublisher =
+                  publishers.find((item) => item.id === article.publisherId) ??
+                  publisher;
+                const articleEdition = allEditions.find(
+                  (item) => item.id === article.editionId,
+                );
 
-              {authUser ? (
-                <p className="reader-post-hint">
-                  Signed in as {authUser.displayName ?? authUser.email}. Open a story to
-                  like, comment, and follow the publisher.
-                </p>
-              ) : (
-                <p className="reader-post-hint">
-                  Sign in to like, save, and post comments on clipped stories.
-                </p>
-              )}
-            </>
+                return (
+                  <CityFeedPostCard
+                    key={article.id}
+                    article={article}
+                    publisher={articlePublisher}
+                    edition={articleEdition}
+                    articleCity={resolveArticleCity(
+                      article,
+                      allEditions,
+                      publishers,
+                    )}
+                    onOpen={onOpenArticle}
+                  />
+                );
+              })
+            )}
+          </div>
+
+          {authUser ? (
+            <p className="reader-post-hint">
+              Signed in as {authUser.displayName ?? authUser.email}. Open a story to
+              like, comment, and follow the publisher.
+            </p>
+          ) : (
+            <p className="reader-post-hint">
+              Sign in to like, save, and post comments on clipped stories.
+            </p>
           )}
         </div>
 
         <aside className="reader-posts-panel reader-page-clips-panel">
           <ReaderSidebarPanel
-            paperViewOpen={paperViewOpen}
+            paperViewOpen={false}
             publisher={publisher}
             edition={edition}
             pageIndex={pageIndex}
@@ -2653,6 +2774,160 @@ function ReaderView({
             onOpenArticle={onOpenArticle}
             onReadEdition={handleReadEdition}
             onSelectPublisher={onSelectPublisher}
+          />
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+interface NewspaperReaderRouteProps {
+  articles: ArticlePost[];
+  publishers: Publisher[];
+  editions: Edition[];
+  profile: UserProfile | null;
+  userAccess: UserAccess;
+  publisher: Publisher;
+  edition: Edition;
+  publisherEditions: Edition[];
+  pageIndex: number;
+  zoom: number;
+  readerMode: boolean;
+  onPageIndex: (value: number) => void;
+  onZoom: (value: number) => void;
+  onReaderMode: (value: boolean) => void;
+  onEditionId: (value: string) => void;
+  onOpenArticle: (articleId: string) => void;
+  onSyncFromArticle: (article: ArticlePost) => void;
+  onSyncFromEdition: (editionId: string, pageIndex: number) => void;
+}
+
+function NewspaperReaderRoute({
+  articles,
+  publishers,
+  editions,
+  profile,
+  userAccess,
+  publisher,
+  edition,
+  publisherEditions,
+  pageIndex,
+  zoom,
+  readerMode,
+  onPageIndex,
+  onZoom,
+  onReaderMode,
+  onEditionId,
+  onOpenArticle,
+  onSyncFromArticle,
+  onSyncFromEdition,
+}: NewspaperReaderRouteProps) {
+  const { articleId, editionId } = useParams<{ articleId?: string; editionId?: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const article = articleId ? articles.find((item) => item.id === articleId) : undefined;
+  const editionExists = editionId ? editions.some((item) => item.id === editionId) : false;
+  const pageQuery = searchParams.get("page") ?? "0";
+
+  useEffect(() => {
+    if (articleId) {
+      const routeArticle = articles.find((item) => item.id === articleId);
+      if (routeArticle) {
+        onSyncFromArticle(routeArticle);
+      }
+      return;
+    }
+
+    if (editionId) {
+      const pageParam = Number(pageQuery);
+      onSyncFromEdition(editionId, Number.isFinite(pageParam) ? pageParam : 0);
+    }
+  }, [articleId, article?.id, editionId, pageQuery]);
+
+  if (articleId && !article) {
+    return (
+      <section className="reader-layout reader-newspaper-route">
+        <p className="empty-state">Article not found.</p>
+        <button type="button" className="back-button" onClick={() => navigate("/reader")}>
+          <ArrowLeft size={18} />
+          Back to feed
+        </button>
+      </section>
+    );
+  }
+
+  if (editionId && !editionExists) {
+    return (
+      <section className="reader-layout reader-newspaper-route">
+        <p className="empty-state">Newspaper edition not found.</p>
+        <button type="button" className="back-button" onClick={() => navigate("/reader")}>
+          <ArrowLeft size={18} />
+          Back to feed
+        </button>
+      </section>
+    );
+  }
+
+  const backPath = article ? `/article/${article.id}` : "/reader";
+  const backLabel = article ? "Back to article" : "Back to feed";
+
+  const sidebarPublishers = publishers;
+
+  return (
+    <section className="reader-layout reader-newspaper-route">
+      <div className="reader-filter-bar reader-newspaper-topbar">
+        <button
+          type="button"
+          className="back-button reader-filter-back"
+          onClick={() => navigate(backPath)}
+        >
+          <ArrowLeft size={18} />
+          {backLabel}
+        </button>
+        <ReaderEditionBar
+          publisher={publisher}
+          edition={edition}
+          editions={publisherEditions}
+          onEditionId={onEditionId}
+          variant="topbar"
+        />
+      </div>
+
+      <div className="reader-workspace">
+        <div className="reader-main">
+          <ReaderPaperPanel
+            articles={articles}
+            profile={profile}
+            userAccess={userAccess}
+            publisher={publisher}
+            edition={edition}
+            editions={publisherEditions}
+            pageIndex={pageIndex}
+            zoom={zoom}
+            readerMode={readerMode}
+            showEditionBar={false}
+            onPageIndex={onPageIndex}
+            onZoom={onZoom}
+            onReaderMode={onReaderMode}
+            onEditionId={onEditionId}
+            onOpenArticle={onOpenArticle}
+          />
+        </div>
+
+        <aside className="reader-posts-panel reader-page-clips-panel reader-page-clips-panel-only">
+          <ReaderSidebarPanel
+            paperViewOpen
+            clipsOnly
+            publisher={publisher}
+            edition={edition}
+            pageIndex={pageIndex}
+            articles={articles}
+            publishers={sidebarPublishers}
+            profile={profile}
+            userAccess={userAccess}
+            onOpenArticle={onOpenArticle}
+            onReadEdition={() => undefined}
+            onSelectPublisher={() => undefined}
           />
         </aside>
       </div>
