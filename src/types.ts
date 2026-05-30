@@ -170,10 +170,19 @@ export interface Columnist {
 
 export interface Comment {
   id: string;
+  userId?: string;
   userName: string;
+  userHandle?: string;
+  userAvatarUrl?: string | null;
   body: string;
   sentiment: "positive" | "neutral" | "concern";
-  createdAt: string;
+  createdAt?: string | unknown;
+  createdAtMs?: number;
+  stats?: {
+    likes: number;
+    shares: number;
+    saves: number;
+  };
 }
 
 export interface MultimediaBlock {

@@ -352,16 +352,20 @@ export const articles: ArticlePost[] = [
       {
         id: "navodaya-smoke-comment-1",
         userName: "Priya Reader",
+        userHandle: "@priya_reads",
         body: "School timing advisory bhi mention karni chahiye.",
         sentiment: "concern",
-        createdAt: "12 min ago",
+        createdAtMs: Date.now() - 12 * 60_000,
+        stats: { likes: 8, shares: 1, saves: 2 },
       },
       {
         id: "navodaya-smoke-comment-2",
         userName: "Aman Delhi",
+        userHandle: "@aman_delhi",
         body: "Please add area-wise AQI numbers in the next update.",
         sentiment: "neutral",
-        createdAt: "24 min ago",
+        createdAtMs: Date.now() - 24 * 60_000,
+        stats: { likes: 5, shares: 0, saves: 1 },
       },
     ],
     multimedia: [
@@ -394,16 +398,20 @@ export const articles: ArticlePost[] = [
       {
         id: "c1",
         userName: "Rahul Subscriber",
+        userHandle: "@rahul_subscriber",
         body: "Senior citizens ke liye offline help desk rehna zaroori hai.",
         sentiment: "concern",
-        createdAt: "10 min ago",
+        createdAtMs: Date.now() - 10 * 60_000,
+        stats: { likes: 14, shares: 2, saves: 3 },
       },
       {
         id: "c2",
         userName: "Anita Verma",
+        userHandle: "@anita_verma",
         body: "Good step. Renewal reminders bhi app me milne chahiye.",
         sentiment: "positive",
-        createdAt: "22 min ago",
+        createdAtMs: Date.now() - 22 * 60_000,
+        stats: { likes: 21, shares: 4, saves: 6 },
       },
     ],
     multimedia: [
@@ -463,9 +471,11 @@ export const articles: ArticlePost[] = [
       {
         id: "c3",
         userName: "Parent Circle",
+        userHandle: "@parent_circle",
         body: "Please publish the full school-wise list when available.",
         sentiment: "neutral",
-        createdAt: "1 hr ago",
+        createdAtMs: Date.now() - 60 * 60_000,
+        stats: { likes: 9, shares: 1, saves: 0 },
       },
     ],
     multimedia: [

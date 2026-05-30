@@ -189,6 +189,7 @@ export interface ClipRegionExtractionInput {
   pageSection: string;
   editionCity?: string;
   editionState?: string;
+  editionLanguage?: string;
   x: number;
   y: number;
   width: number;

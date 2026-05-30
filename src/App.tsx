@@ -8,6 +8,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { ZoomableImageSurface } from "./components/ZoomableImageSurface";
+import { SocialCommentCard } from "./components/SocialCommentCard";
 import type { User } from "firebase/auth";
 import {
   ArrowLeft,
@@ -39,6 +41,9 @@ import {
   ExternalLink,
   Pencil,
   EyeOff,
+  RefreshCw,
+  RotateCcw,
+  Save,
   Search,
   Share2,
   Trash2,
@@ -66,7 +71,6 @@ import {
   canReadEdition,
   canUseDiscussion,
   canManagePublisher,
-  hasPublisherSubscription,
 } from "./services/authorization";
 import {
   getPaperLoopContent,
@@ -1507,83 +1511,125 @@ function CityFeedPostCard({
   );
 }
 
-interface PublisherSidebarProps {
-  publishers: Publisher[];
-  selectedPublisherId: string;
-  onSelectPublisher: (publisherId: string) => void;
-  onReadEdition: (publisherId: string) => void;
+function getReadablePageArticles(
+  articles: ArticlePost[],
+  edition: Edition,
+  page: Page | undefined,
+  profile: UserProfile | null,
+  userAccess: UserAccess,
+) {
+  if (!page) {
+    return [];
+  }
+
+  return articles.filter(
+    (article) =>
+      article.editionId === edition.id &&
+      (article.pageId === page.id || article.pageNumber === page.pageNumber) &&
+      canReadArticle(article, profile, userAccess),
+  );
 }
 
-function PublisherSidebar({
-  publishers,
-  selectedPublisherId,
-  onSelectPublisher,
+interface ReaderPageClipsPanelProps {
+  paperViewOpen: boolean;
+  publisher: Publisher;
+  edition: Edition;
+  pageIndex: number;
+  articles: ArticlePost[];
+  profile: UserProfile | null;
+  userAccess: UserAccess;
+  onOpenArticle: (articleId: string) => void;
+  onReadEdition: () => void;
+}
+
+function ReaderPageClipsPanel({
+  paperViewOpen,
+  publisher,
+  edition,
+  pageIndex,
+  articles,
+  profile,
+  userAccess,
+  onOpenArticle,
   onReadEdition,
-}: PublisherSidebarProps) {
+}: ReaderPageClipsPanelProps) {
+  const page = edition.pages[pageIndex] ?? edition.pages[0];
+  const pageArticles = useMemo(
+    () => getReadablePageArticles(articles, edition, page, profile, userAccess),
+    [articles, edition, page, profile, userAccess],
+  );
+
+  if (!paperViewOpen) {
+    return (
+      <>
+        <div className="section-heading compact">
+          <span className="eyebrow">Page clips</span>
+          <h2>Stories on each page</h2>
+          <p>Open an edition to browse clipped stories page by page.</p>
+        </div>
+        <button type="button" className="reader-page-clips-open-edition" onClick={onReadEdition}>
+          <BookOpen size={16} />
+          Read {publisher.name}
+        </button>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="section-heading compact">
-        <span className="eyebrow">Most followed</span>
-        <h2>Trending newspapers</h2>
-        <p>Follow publishers and open their latest edition.</p>
+        <span className="eyebrow">{publisher.name}</span>
+        <h2>
+          Page {page?.pageNumber ?? pageIndex + 1} clips
+        </h2>
+        <p>
+          {page?.section ? `${page.section} • ` : ""}
+          {pageArticles.length} {pageArticles.length === 1 ? "story" : "stories"} on this page
+        </p>
       </div>
 
-      <div className="publisher-sidebar-list">
-        {publishers.length === 0 ? (
-          <p className="empty-state">No newspapers match these filters yet.</p>
+      <div className="reader-page-clips-list">
+        {pageArticles.length === 0 ? (
+          <p className="empty-state">No clipped stories on this page yet.</p>
         ) : (
-          publishers.map((item, index) => (
-            <article
-              className={`publisher-sidebar-card${item.id === selectedPublisherId ? " active" : ""}`}
-              key={item.id}
+          pageArticles.map((article) => (
+            <button
+              type="button"
+              className="reader-page-clip-card"
+              key={article.id}
+              onClick={() => onOpenArticle(article.id)}
             >
-              <div className="publisher-sidebar-card-head">
-                <button
-                  type="button"
-                  className="publisher-sidebar-main"
-                  onClick={() => onSelectPublisher(item.id)}
+              {article.clippedImageUrl ? (
+                <figure className="reader-page-clip-image">
+                  <img src={article.clippedImageUrl} alt={article.title} />
+                </figure>
+              ) : (
+                <div
+                  className={`reader-page-clip-image placeholder clip-visual ${article.clippedImageTone}`}
                 >
-                  <div className="publisher-logo">{item.logo}</div>
-                  <div className="publisher-sidebar-copy">
-                    <div className="publisher-sidebar-title-row">
-                      <strong>{item.name}</strong>
-                      {item.isLeading && (
-                        <span className="publisher-sidebar-badge">
-                          <TrendingUp size={12} />
-                          Trending
-                        </span>
-                      )}
-                    </div>
-                    <span>
-                      {item.city} • {item.language}
-                    </span>
-                    <small>
-                      <Users size={12} />
-                      {compactNumber(item.subscriberCount)} followers
-                    </small>
-                  </div>
-                </button>
-                <span className="publisher-sidebar-rank">#{index + 1}</span>
+                  <span>{article.section}</span>
+                </div>
+              )}
+              <div className="reader-page-clip-copy">
+                <span>{article.section}</span>
+                <strong>{article.title}</strong>
+                <p>{article.summary}</p>
+                <div className="reader-page-clip-metrics">
+                  <span>
+                    <Eye size={12} />
+                    {article.stats.views.toLocaleString()}
+                  </span>
+                  <span>
+                    <Heart size={12} />
+                    {(article.stats.likes ?? 0).toLocaleString()}
+                  </span>
+                  <span>
+                    <MessageCircle size={12} />
+                    {Math.max(article.stats.comments, article.comments.length)}
+                  </span>
+                </div>
               </div>
-              <div className="publisher-sidebar-signals">
-                <span>
-                  <Bookmark size={14} />
-                  {compactNumber(item.bookmarkCount)}
-                </span>
-                <span>
-                  <Sparkles size={14} />
-                  {compactNumber(item.likeCount)}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="publisher-sidebar-read"
-                onClick={() => onReadEdition(item.id)}
-              >
-                <BookOpen size={16} />
-                Read edition
-              </button>
-            </article>
+            </button>
           ))
         )}
       </div>
@@ -1809,12 +1855,33 @@ function ReaderPageLightbox({
               <div
                 className={`reader-page-stage reader-page-lightbox-page${hasPageImage ? " has-image" : ""}`}
               >
-                {hasPageImage ? (
-                  <img
+                {hasPageImage && page.imageUrl ? (
+                  <ZoomableImageSurface
                     src={page.imageUrl}
                     alt={`${publisher.name} page ${page.pageNumber} - ${page.section}`}
-                    draggable={false}
-                  />
+                    zoom={zoom}
+                    maxWidth={920}
+                    className="reader-page-lightbox-image"
+                  >
+                    {showClips &&
+                      !grabMode &&
+                      pageHotspots.map((hotspot) => (
+                        <button
+                          type="button"
+                          className="hotspot"
+                          key={hotspot.id}
+                          style={{
+                            left: `${hotspot.x}%`,
+                            top: `${hotspot.y}%`,
+                            width: `${hotspot.width}%`,
+                            height: `${hotspot.height}%`,
+                          }}
+                          onClick={() => onOpenArticle(hotspot.articleId)}
+                        >
+                          <span>{hotspot.label}</span>
+                        </button>
+                      ))}
+                  </ZoomableImageSurface>
                 ) : (
                   <div className="reader-page-placeholder">
                     <span className="eyebrow">
@@ -1824,24 +1891,6 @@ function ReaderPageLightbox({
                     <p>{page.subhead}</p>
                   </div>
                 )}
-                {showClips &&
-                  !grabMode &&
-                  pageHotspots.map((hotspot) => (
-                    <button
-                      type="button"
-                      className="hotspot"
-                      key={hotspot.id}
-                      style={{
-                        left: `${hotspot.x}%`,
-                        top: `${hotspot.y}%`,
-                        width: `${hotspot.width}%`,
-                        height: `${hotspot.height}%`,
-                      }}
-                      onClick={() => onOpenArticle(hotspot.articleId)}
-                    >
-                      <span>{hotspot.label}</span>
-                    </button>
-                  ))}
               </div>
             </div>
           </div>
@@ -2010,14 +2059,76 @@ function usePanZoomViewport(zoom: number, onZoom: (value: number) => void) {
       onWheel: handleViewportWheel,
     },
     transformStyle: {
-      transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+      transform: `translate3d(${pan.x}px, ${pan.y}px, 0)`,
     },
   };
 }
 
+interface ReaderPageThumbnailCarouselProps {
+  pages: Page[];
+  pageIndex: number;
+  onPageIndex: (value: number) => void;
+}
+
+function ReaderPageThumbnailCarousel({
+  pages,
+  pageIndex,
+  onPageIndex,
+}: ReaderPageThumbnailCarouselProps) {
+  const activeThumbRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeThumbRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [pageIndex, pages]);
+
+  if (pages.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="reader-page-carousel" aria-label="Edition pages">
+      <div className="reader-page-carousel-track">
+        {pages.map((editionPage, index) => {
+          const previewUrl = editionPage.thumbnailUrl ?? editionPage.imageUrl;
+          const isActive = index === pageIndex;
+
+          return (
+            <button
+              type="button"
+              key={editionPage.id}
+              ref={isActive ? activeThumbRef : undefined}
+              className={`reader-page-thumb${isActive ? " active" : ""}`}
+              onClick={() => onPageIndex(index)}
+              aria-label={`Open page ${editionPage.pageNumber}`}
+              aria-current={isActive ? "page" : undefined}
+            >
+              {previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt=""
+                  loading="lazy"
+                />
+              ) : (
+                <span className="reader-page-thumb-fallback">{editionPage.pageNumber}</span>
+              )}
+              <span className="reader-page-thumb-label">
+                {editionPage.pageNumber}
+                {editionPage.section ? ` • ${editionPage.section}` : ""}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface ReaderPaperPanelProps {
   articles: ArticlePost[];
-  authUser: User | null;
   profile: UserProfile | null;
   userAccess: UserAccess;
   publisher: Publisher;
@@ -2035,7 +2146,6 @@ interface ReaderPaperPanelProps {
 
 function ReaderPaperPanel({
   articles,
-  authUser,
   profile,
   userAccess,
   publisher,
@@ -2054,8 +2164,12 @@ function ReaderPaperPanel({
   const [showClips, setShowClips] = useState(true);
   const page = edition.pages[pageIndex] ?? edition.pages[0];
   const canReadSelectedEdition = canReadEdition(edition, profile, userAccess);
-  const pageArticles = articles.filter(
-    (article) => page && article.pageId === page.id && canReadArticle(article, profile, userAccess),
+  const pageArticles = getReadablePageArticles(
+    articles,
+    edition,
+    page,
+    profile,
+    userAccess,
   );
   const pageHotspots = useMemo(() => {
     if (!page) {
@@ -2085,66 +2199,39 @@ function ReaderPaperPanel({
 
   return (
     <>
-      <div className="reader-control-bar">
-        <div className="reader-control-group">
-          <span className="eyebrow">Now reading</span>
+      <div className="reader-edition-bar">
+        <div className="reader-edition-meta">
           <strong>{publisher.name}</strong>
-          <span>
-            {publisher.city} • {edition.date}
-          </span>
-          {authUser && (
-            <span className="access-chip">
-              {hasPublisherSubscription(userAccess, publisher.id)
-                ? "Subscriber access"
-                : canManagePublisher(profile, userAccess, publisher.id)
-                  ? "Publisher staff"
-                  : "Reader access"}
-            </span>
-          )}
+          <span>{edition.date}</span>
         </div>
 
-        <label className="edition-select compact">
-          <span>Edition</span>
+        <label className="edition-select compact reader-edition-select">
+          <span className="sr-only">Edition</span>
           <select
             value={edition.id}
             onChange={(event) => onEditionId(event.target.value)}
           >
             {editions.length === 0 ? (
-              <option value={edition.id}>{edition.title}</option>
+              <option value={edition.id}>{edition.date}</option>
             ) : (
               editions.map((publisherEdition) => (
                 <option key={publisherEdition.id} value={publisherEdition.id}>
-                  {publisherEdition.title} • {publisherEdition.date} •{" "}
-                  {formatRole(publisherEdition.status)}
+                  {publisherEdition.date} • {formatRole(publisherEdition.status)}
                 </option>
               ))
             )}
           </select>
         </label>
+      </div>
 
-        <div className="edition-controls">
-          <button
-            onClick={() => onPageIndex(Math.max(0, pageIndex - 1))}
-            disabled={!hasPages || pageIndex === 0}
-            aria-label="Previous page"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <span>
-            Page {page?.pageNumber ?? 0} of {Math.max(edition.pages.length, 1)}
-          </span>
-          <button
-            onClick={() =>
-              onPageIndex(Math.min(edition.pages.length - 1, pageIndex + 1))
-            }
-            disabled={!hasPages || pageIndex === edition.pages.length - 1}
-            aria-label="Next page"
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
+      <ReaderPageThumbnailCarousel
+        pages={edition.pages}
+        pageIndex={pageIndex}
+        onPageIndex={onPageIndex}
+      />
 
-        <div className="tool-row">
+      <div className="reader-paper-toolbar">
+        <div className="tool-row reader-paper-tools">
           <button onClick={() => onZoom(Math.max(0.85, zoom - 0.1))} aria-label="Zoom out">
             <ZoomOut size={18} />
           </button>
@@ -2177,6 +2264,17 @@ function ReaderPaperPanel({
             Reader mode
           </button>
         </div>
+
+        <div className="reader-paper-actions">
+          <button type="button">
+            <Bookmark size={18} />
+            Save
+          </button>
+          <button type="button">
+            <Share2 size={18} />
+            Share
+          </button>
+        </div>
       </div>
 
       {!canReadSelectedEdition && (
@@ -2191,22 +2289,6 @@ function ReaderPaperPanel({
           </div>
         </section>
       )}
-
-      <div className="viewer-toolbar">
-        <div>
-          <span className="eyebrow">Full-page e-paper</span>
-        </div>
-        <div className="viewer-actions">
-          <button type="button">
-            <Bookmark size={18} />
-            Save edition
-          </button>
-          <button type="button">
-            <Share2 size={18} />
-            Share page
-          </button>
-        </div>
-      </div>
 
       <div
         className={`paper-stage ${readerMode ? "reader-mode" : ""}${hasPageImage ? " has-page-image" : ""}`}
@@ -2311,7 +2393,6 @@ function ReaderView({
   onReaderLanguage,
   onReaderState,
   onReaderCity,
-  onSelectPublisher,
   onPageIndex,
   onZoom,
   onReaderMode,
@@ -2347,19 +2428,23 @@ function ReaderView({
       userAccess,
     ],
   );
-  const sidebarPublishers = useMemo(
-    () => filterPublishersByLocale(publishers, editionLocations, localeFilters),
-    [editionLocations, localeFilters, publishers],
-  );
-
-  function handleReadEdition(publisherId: string) {
-    onSelectPublisher(publisherId);
+  function handleReadEdition() {
     onPaperViewOpenChange(true);
   }
 
   return (
     <section className="reader-layout">
       <div className="reader-filter-bar">
+        {paperViewOpen ? (
+          <button
+            type="button"
+            className="back-button reader-filter-back"
+            onClick={() => onPaperViewOpenChange(false)}
+          >
+            <ArrowLeft size={18} />
+            Back to feed
+          </button>
+        ) : null}
         <SelectFilter
           compact
           icon={<Filter size={14} />}
@@ -2390,20 +2475,10 @@ function ReaderView({
       <div className="reader-workspace">
         <div className="reader-main">
           {paperViewOpen ? (
-            <>
-              <button
-                type="button"
-                className="back-button feed-back-button"
-                onClick={() => onPaperViewOpenChange(false)}
-              >
-                <ArrowLeft size={18} />
-                Back to city feed
-              </button>
-              <ReaderPaperPanel
-                articles={articles}
-                authUser={authUser}
-                profile={profile}
-                userAccess={userAccess}
+            <ReaderPaperPanel
+              articles={articles}
+              profile={profile}
+              userAccess={userAccess}
                 publisher={publisher}
                 edition={edition}
                 editions={editions}
@@ -2414,9 +2489,8 @@ function ReaderView({
                 onZoom={onZoom}
                 onReaderMode={onReaderMode}
                 onEditionId={onEditionId}
-                onOpenArticle={onOpenArticle}
-              />
-            </>
+              onOpenArticle={onOpenArticle}
+            />
           ) : (
             <>
               <div className="city-feed">
@@ -2425,8 +2499,8 @@ function ReaderView({
                     <Sparkles size={20} />
                     <strong>No city clips yet</strong>
                     <p>
-                      Try another city filter or pick a trending newspaper from the
-                      sidebar to read today&apos;s edition.
+                      Try another city filter or open a story below to read today&apos;s
+                      edition page by page.
                     </p>
                   </div>
                 ) : (
@@ -2470,11 +2544,16 @@ function ReaderView({
           )}
         </div>
 
-        <aside className="reader-posts-panel publisher-sidebar">
-          <PublisherSidebar
-            publishers={sidebarPublishers}
-            selectedPublisherId={publisher.id}
-            onSelectPublisher={onSelectPublisher}
+        <aside className="reader-posts-panel reader-page-clips-panel">
+          <ReaderPageClipsPanel
+            paperViewOpen={paperViewOpen}
+            publisher={publisher}
+            edition={edition}
+            pageIndex={pageIndex}
+            articles={articles}
+            profile={profile}
+            userAccess={userAccess}
+            onOpenArticle={onOpenArticle}
             onReadEdition={handleReadEdition}
           />
         </aside>
@@ -3160,18 +3239,12 @@ function PublisherClipDetailRoute({
             <span className="eyebrow">Comments</span>
             <h2>Reader discussion</h2>
           </div>
-          <div className="comment-list">
+          <div className="comment-list social-comment-list">
             {comments.length === 0 ? (
               <p className="empty-state">No comments recorded for this clip yet.</p>
             ) : (
               comments.map((comment) => (
-                <article className="comment-card" key={comment.id}>
-                  <div>
-                    <strong>{comment.userName}</strong>
-                    <span>{formatActivityDate(comment.createdAt)}</span>
-                  </div>
-                  <p>{comment.body}</p>
-                </article>
+                <SocialCommentCard key={comment.id} comment={comment} compact />
               ))
             )}
           </div>
@@ -3384,11 +3457,12 @@ function ClipImageLightbox({
           {...viewportHandlers}
         >
           <div className="reader-page-lightbox-transform" style={transformStyle}>
-            <img
-              className="clip-lightbox-image"
+            <ZoomableImageSurface
               src={imageUrl}
               alt={title}
-              draggable={false}
+              zoom={zoom}
+              maxWidth={960}
+              className="clip-lightbox-image"
             />
           </div>
         </div>
@@ -3787,20 +3861,35 @@ function ArticleView({
               Subscriber or publisher staff access is required for this discussion.
             </p>
           )}
-          <div className="comment-list">
+          <div className="comment-list social-comment-list">
             {commentsLoading ? (
               <p className="empty-state">Loading discussion...</p>
             ) : comments.length === 0 ? (
               <p className="empty-state">No comments yet. Start the discussion.</p>
             ) : (
               comments.map((comment) => (
-                <article className="comment-card" key={comment.id}>
-                  <div>
-                    <strong>{comment.userName}</strong>
-                    <span>{comment.createdAt}</span>
-                  </div>
-                  <p>{comment.body}</p>
-                </article>
+                <SocialCommentCard
+                  key={comment.id}
+                  comment={comment}
+                  disabled={!canJoinDiscussion}
+                  onEngage={(type) => {
+                    if (!authUser) {
+                      onAuthRequired();
+                      return;
+                    }
+
+                    if (type === "reply") {
+                      setCommentBody((current) =>
+                        current ? current : `@${comment.userHandle?.replace(/^@/, "") ?? comment.userName.split(" ")[0]?.toLowerCase()} `,
+                      );
+                      return;
+                    }
+
+                    if (canReadSelectedArticle) {
+                      void handleEngagement(type === "share" ? "share" : type === "save" ? "save" : "like");
+                    }
+                  }}
+                />
               ))
             )}
           </div>
@@ -5366,6 +5455,7 @@ function AdminView({
         pageSection,
         editionCity: previewEdition.city,
         editionState: previewEdition.state,
+        editionLanguage: previewEdition.language,
         ...normalized,
       });
 
@@ -6246,6 +6336,9 @@ function AdminView({
                 <p className="empty-state">No publisher workspace is assigned to this account.</p>
               ) : (
                 <>
+                  <div className="edition-studio-bar-group">
+                    <span className="edition-studio-bar-group-label">Publication</span>
+                    <div className="edition-studio-bar-group-fields">
                   <label className="studio-field">
                     <span>Publisher</span>
                     <select
@@ -6318,6 +6411,11 @@ function AdminView({
                       ))}
                     </select>
                   </label>
+                    </div>
+                  </div>
+                  <div className="edition-studio-bar-group">
+                    <span className="edition-studio-bar-group-label">Edition</span>
+                    <div className="edition-studio-bar-group-fields">
                   <label className="studio-field">
                     <span>Edition date</span>
                     <input
@@ -6334,6 +6432,11 @@ function AdminView({
                       placeholder="Optional headline"
                     />
                   </label>
+                    </div>
+                  </div>
+                  <div className="edition-studio-bar-group edition-studio-bar-group-upload">
+                    <span className="edition-studio-bar-group-label">Source file</span>
+                    <div className="edition-studio-bar-group-fields">
                   <label className="studio-field studio-field-upload">
                     <span>Upload PDF or page image</span>
                     <input
@@ -6351,6 +6454,8 @@ function AdminView({
                     <FileUp size={16} />
                     {uploadStatus === "uploading" ? "Uploading..." : "Upload"}
                   </button>
+                    </div>
+                  </div>
                   <details className="studio-advanced-fields">
                     <summary>Edition defaults</summary>
                     <div className="studio-advanced-grid">
@@ -6381,6 +6486,8 @@ function AdminView({
               )}
             </div>
             <div className="edition-studio-bar-actions">
+              <span className="edition-studio-bar-group-label">Workspace</span>
+              <div className="edition-studio-bar-group-fields">
               <label className="studio-field">
                 <span>Open edition</span>
                 <select
@@ -6463,6 +6570,7 @@ function AdminView({
                   </button>
                 </>
               )}
+              </div>
             </div>
           </div>
 
@@ -6863,10 +6971,10 @@ function AdminView({
                     className="article-block-form compact section-panel-form"
                     onSubmit={handleArticleBlockSubmit}
                   >
-                    <div className="section-panel-body">
-                      {(draftClipPreviewUrl ||
-                        selectedClipSavedPost?.clippedImageUrl ||
-                        selectedBlock?.clippedImageUrl) && (
+                    {(draftClipPreviewUrl ||
+                      selectedClipSavedPost?.clippedImageUrl ||
+                      selectedBlock?.clippedImageUrl) && (
+                      <div className="section-panel-preview">
                         <figure className="saved-clip-preview">
                           <img
                             key={
@@ -6891,11 +6999,15 @@ function AdminView({
                                   : "Saved clipping"}
                           </figcaption>
                         </figure>
-                      )}
+                      </div>
+                    )}
+                    <div className="section-panel-body">
                       {clipExtractStatus === "loading" && (
                         <p className="clip-extract-status loading">Extracting clip details...</p>
                       )}
-                      <div className="form-grid">
+                      <div className="section-panel-form-group section-panel-form-group--meta">
+                        <h3 className="section-panel-form-group-title">Classification</h3>
+                        <div className="form-grid">
                         <label>
                           <span>Type</span>
                           <select
@@ -6920,6 +7032,11 @@ function AdminView({
                             onChange={(event) => setArticleSection(event.target.value)}
                           />
                         </label>
+                        </div>
+                      </div>
+                      <details className="section-panel-advanced section-panel-advanced--story" open>
+                        <summary>Story details</summary>
+                        <div className="form-grid">
                         <label>
                           <span>Title</span>
                           <input
@@ -6940,7 +7057,7 @@ function AdminView({
                             }}
                           />
                         </label>
-                        <label>
+                        <label className="studio-field-wide">
                           <span>Editor</span>
                           <select
                             value={articleEditorId}
@@ -6973,7 +7090,7 @@ function AdminView({
                           ) : null}
                         </label>
                         {publisherEditorProfiles.length === 0 && (
-                          <p className="clip-locale-hint">
+                          <p className="clip-locale-hint studio-field-wide">
                             No editors found for this publisher yet. Invite team members below.
                           </p>
                         )}
@@ -6983,7 +7100,7 @@ function AdminView({
                             value={articleSummary}
                             disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleSummary(event.target.value)}
-                            rows={3}
+                            rows={2}
                           />
                         </label>
                         <label className="studio-field-wide">
@@ -6992,10 +7109,11 @@ function AdminView({
                             value={articleBody}
                             disabled={clipExtractStatus === "loading"}
                             onChange={(event) => setArticleBody(event.target.value)}
-                            rows={4}
+                            rows={3}
                           />
                         </label>
-                      </div>
+                        </div>
+                      </details>
                       <details
                         className="section-panel-advanced"
                         open={Boolean(selectedClipSavedPost)}
@@ -7167,6 +7285,7 @@ function AdminView({
                           }
                           onClick={handleSaveBlockDraft}
                         >
+                          <Save size={14} />
                           {blockSaveStatus === "saving" ? "Saving..." : "Save clip"}
                         </button>
                         <button
@@ -7175,6 +7294,11 @@ function AdminView({
                             articleCreateStatus === "saving" || clipExtractStatus === "loading"
                           }
                         >
+                          {selectedClipSavedPost ? (
+                            <CheckCircle2 size={14} />
+                          ) : (
+                            <Sparkles size={14} />
+                          )}
                           {articleCreateStatus === "saving"
                             ? selectedClipSavedPost
                               ? "Updating..."
@@ -7194,6 +7318,7 @@ function AdminView({
                               }
                               onClick={() => void handleRefreshClipImage()}
                             >
+                              <RefreshCw size={14} />
                               Refresh crop
                             </button>
                             <Link
@@ -7205,7 +7330,7 @@ function AdminView({
                                 )
                               }
                             >
-                              <Pencil size={15} />
+                              <Pencil size={14} />
                               Full editor
                             </Link>
                           </>
@@ -7217,6 +7342,7 @@ function AdminView({
                             disabled={blockSaveStatus === "saving"}
                             onClick={() => void handleDeleteBlock(selectedBlock)}
                           >
+                            <Trash2 size={14} />
                             Delete clip
                           </button>
                         )}
@@ -7225,6 +7351,7 @@ function AdminView({
                           className="secondary-action"
                           onClick={resetCurrentSectionForm}
                         >
+                          <RotateCcw size={14} />
                           Reset
                         </button>
                         {selectedBlock && selectedBlock.status !== "published" && (
@@ -7237,6 +7364,11 @@ function AdminView({
                               )
                             }
                           >
+                            {selectedBlock.status === "rejected" ? (
+                              <CheckCircle2 size={14} />
+                            ) : (
+                              <X size={14} />
+                            )}
                             {selectedBlock.status === "rejected" ? "Accept" : "Reject"}
                           </button>
                         )}

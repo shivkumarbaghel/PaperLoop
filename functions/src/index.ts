@@ -23,6 +23,7 @@ interface EditionRecord {
   title: string;
   date: string;
   city: string;
+  language?: string;
   sections?: string[];
   status: "draft" | "processing" | "review" | "published" | "archived" | "failed";
   sourceAssetPath?: string;
@@ -80,6 +81,7 @@ interface ClipRegionInput {
   pageSection: string;
   editionCity?: string;
   editionState?: string;
+  editionLanguage?: string;
   x: number;
   y: number;
   width: number;
@@ -145,6 +147,7 @@ export const extractClipRegionDetails = onCall(
       {
         editionCity: input.editionCity?.trim() || "",
         editionState: input.editionState?.trim() || "",
+        editionLanguage: input.editionLanguage?.trim() || "",
       },
     );
 
@@ -488,7 +491,7 @@ async function persistSuggestedBlocks(
   page: PageAssetResult,
   apiKey: string,
 ) {
-  const suggestedBlocks = await detectBlocks(page, apiKey);
+  const suggestedBlocks = await detectBlocks(page, apiKey, edition.language);
 
   await Promise.all(
     suggestedBlocks.map((block, index) =>
@@ -542,6 +545,7 @@ function processingQueueToken(value: unknown) {
 async function detectBlocks(
   page: PageAssetResult,
   apiKey: string,
+  language?: string,
 ): Promise<SuggestedBlock[]> {
   if (!apiKey) {
     return fallbackBlocks(page);
@@ -559,14 +563,7 @@ async function detectBlocks(
           content: [
             {
               type: "input_text",
-              text: [
-                "Identify newspaper article and advertisement blocks in this Hindi e-paper page.",
-                "Return normalized percentage coordinates relative to the page image.",
-                "Coordinates must use 0-100 percentages, and every block must satisfy x + width <= 100 and y + height <= 100.",
-                "Draw tight rectangles around complete story or ad units only; do not include mastheads, page margins, crop marks, color bars, or unrelated neighboring stories.",
-                "Prefer several precise blocks over one large mixed block, and avoid overlaps unless the printed page genuinely overlaps content.",
-                "Keep body text short; editors will correct OCR manually.",
-              ].join(" "),
+              text: buildBlockDetectionPrompt(language),
             },
             {
               type: "input_image",
@@ -588,7 +585,7 @@ async function detectBlocks(
             properties: {
               blocks: {
                 type: "array",
-                maxItems: 12,
+                maxItems: 25,
                 items: {
                   type: "object",
                   additionalProperties: false,
@@ -642,9 +639,220 @@ async function detectBlocks(
   }
 }
 
+/**
+ * Maps a publisher-selected language name (e.g. "Hindi", "Tamil", "Urdu") to
+ * a short description of the script and any special considerations, suitable
+ * for inclusion in an AI prompt.
+ */
+function languagePromptHint(language?: string): string {
+  const lang = (language ?? "").trim();
+
+  if (!lang) {
+    return "The newspaper language is unknown. It may be in Hindi (Devanagari), English, or another Indian language.";
+  }
+
+  const scriptMap: Record<string, { script: string; note?: string }> = {
+    Hindi: { script: "Devanagari" },
+    Marathi: { script: "Devanagari" },
+    Sanskrit: { script: "Devanagari" },
+    Gujarati: { script: "Gujarati" },
+    Bengali: { script: "Bengali" },
+    Assamese: { script: "Bengali/Assamese" },
+    Tamil: { script: "Tamil" },
+    Telugu: { script: "Telugu" },
+    Kannada: { script: "Kannada" },
+    Malayalam: { script: "Malayalam" },
+    Punjabi: { script: "Gurmukhi" },
+    Odia: { script: "Odia" },
+    Urdu: { script: "Nastaliq", note: "Text runs right-to-left." },
+    English: { script: "Latin" },
+  };
+
+  const info = scriptMap[lang];
+
+  if (!info) {
+    return `The newspaper is in ${lang}. Transcribe body text faithfully in the original script.`;
+  }
+
+  const parts = [
+    `The newspaper is in ${lang} (${info.script} script).`,
+    `Transcribe body text in ${lang} Unicode — do NOT transliterate or translate.`,
+    "English words or acronyms that appear within the text should be kept in Latin script as printed.",
+  ];
+
+  if (info.note) {
+    parts.push(info.note);
+  }
+
+  return parts.join(" ");
+}
+
+function buildBlockDetectionPrompt(language?: string): string {
+  return [
+    "You are an expert newspaper layout analyst. Your task is to identify ALL distinct editorial blocks on this e-paper page image.",
+    "",
+    "=== LANGUAGE ===",
+    languagePromptHint(language),
+    "",
+    "=== WHAT TO DETECT ===",
+    "Detect every: news article, advertisement, standalone photograph with caption, boxed notice, and editorial box as a separate block.",
+    "Each block must represent exactly ONE self-contained editorial unit.",
+    "",
+    "=== WHAT TO SKIP ===",
+    "Do NOT create blocks for: the masthead/nameplate, page number, publication date line, column separator rules, page margins, registration/crop marks, color calibration bars.",
+    "",
+    "=== BOUNDING BOX RULES (CRITICAL) ===",
+    "1. Coordinates are percentage values (0 to 100) relative to the full page image dimensions.",
+    "2. Every block must satisfy: x + width <= 100 AND y + height <= 100.",
+    "3. Draw the TIGHTEST possible rectangle that fully encloses the block — no excess whitespace.",
+    "4. STRICT NO-OVERLAP: Two blocks must NOT overlap each other. If block edges share a column rule, position them so their bounding boxes are adjacent but not intersecting.",
+    "5. Do NOT draw a large outer block that contains smaller inner blocks. If you see nested content, use separate non-overlapping blocks for each piece.",
+    "6. Every block must be at least 3% wide and 2% tall to be meaningful.",
+    "",
+    "=== NON-RECTANGULAR CONTENT ===",
+    "Articles sometimes wrap around an advertisement forming an L-shape or U-shape.",
+    "For these, split the article into 2 or 3 rectangular sub-regions that together cover the full article without overlapping the ad.",
+    "Use the same base label for all parts, e.g. 'Lead story – part 1' and 'Lead story – part 2'.",
+    "Each part is its own block entry.",
+    "",
+    "=== COVERAGE ===",
+    "Try to cover all visible content — do not leave large text-filled regions undetected.",
+    "If uncertain about a region, still emit a block with lower confidence (0.4–0.6).",
+    "",
+    "=== OUTPUT ORDER & CONFIDENCE ===",
+    "Sort blocks in natural reading order: top-to-bottom, left-to-right.",
+    "Confidence: 0.85–1.0 for clearly distinct, well-bounded blocks; 0.5–0.84 for somewhat uncertain; 0.3–0.49 for guesses.",
+    "Keep body text to 1–3 sentences; editors will correct OCR manually.",
+  ].join("\n");
+}
+
+function buildClipExtractionPrompt(
+  pageSection: string,
+  localeHint: string,
+  language?: string,
+): string {
+  return [
+    "You are an expert newspaper editor and OCR specialist for a regional e-paper platform.",
+    "You have been given a CROPPED region of a newspaper page that a publisher selected manually.",
+    "Your job is to extract clean editorial metadata to pre-fill the publisher's article creation form.",
+    "",
+    "=== LANGUAGE & SCRIPT ===",
+    languagePromptHint(language),
+    "",
+    "=== CONTENT TYPE ===",
+    "Identify the content type first — this controls how other fields are extracted:",
+    "• 'article'  — news story, feature, opinion, interview (most common)",
+    "• 'advertisement' — paid promotional content (look for: price lists, brand logos, taglines, 'विज्ञापन', 'Advt.')",
+    "• 'photo'    — standalone photograph with or without a caption",
+    "• 'notice'   — government notice, tender, exam result, obituary, legal notice",
+    "• 'other'    — anything not covered above (e.g. TV schedule, weather table)",
+    "",
+    "=== HEADLINE (title field) ===",
+    "• The headline is almost always the LARGEST or BOLDEST text, typically at the top of the clip.",
+    "• If there is both a kicker/deck line and a main headline, extract the MAIN headline.",
+    "• Transcribe the headline faithfully in the script it is printed — do NOT translate or transliterate.",
+    "• If no clear headline is visible (e.g. advertisement or photo), write a short descriptive title instead.",
+    "",
+    "=== LABEL (label field) ===",
+    "• A short UI chip label for the studio sidebar: 3–6 words maximum.",
+    "• Capture the TOPIC of the story, NOT the headline verbatim.",
+    "• Always write in English for easy scanning — even if the article is in a non-Latin script.",
+    "• Good examples: 'PM Modi budget speech', 'Road accident Kanpur', 'IPL final result', 'Flood relief UP'",
+    "• Bad examples: (headline verbatim in any script), 'Article about news', 'Story 1'",
+    "",
+    "=== SECTION ===",
+    `• Default section from the page: '${pageSection}'.`,
+    "• Use this default UNLESS the clip itself has a visible section flag/header that clearly names a different section",
+    "  (e.g., 'खेल', 'Sports', 'Business', 'Crime', 'Health', 'Entertainment', 'व्यापार', 'ক্রীড়া').",
+    "• Do NOT invent or guess a section — if in doubt, return the default.",
+    "",
+    "=== SUMMARY ===",
+    "• 1–3 English sentences that clearly describe what this piece is about.",
+    "• For advertisements: describe the product/brand and the offer or call-to-action.",
+    "• For notices: describe the subject (e.g., 'Tender notice for road construction project in Lucknow issued by PWD.').",
+    "• For photos: describe what/who is shown and why it is newsworthy.",
+    "",
+    "=== BODY (OCR body text) ===",
+    "• Transcribe the main article body text as accurately as possible in the original script (per the LANGUAGE section above).",
+    "• Limit to approximately 300 words — editors will correct and expand the text manually.",
+    "• Skip: standalone photo captions that are separate from the article body, advertisement price lists,",
+    "  phone/contact numbers (unless they are part of a notice), page folios.",
+    "• For advertisements, transcribe only the main ad copy — omit fine-print legal disclaimers.",
+    "",
+    "=== AREA (locality) ===",
+    localeHint
+      ? `• Edition locale context (city/state — do NOT use this as the area value): ${localeHint}.`
+      : "• No edition locale hint was provided.",
+    "• Set area to the SPECIFIC locality, neighborhood, district, tehsil, or smaller town explicitly named in the clip text.",
+    "• It must be MORE SPECIFIC than the edition city — e.g., 'Gomti Nagar', 'Hazratganj', 'Varanasi Cantonment', 'Noida Sector 18'.",
+    "• If no specific sub-city locality is mentioned in the text, return empty string ''.",
+    "",
+    "=== TAGS ===",
+    "• Return 3–6 specific, searchable tags (English preferred).",
+    "• Tags should be SPECIFIC (e.g., 'flood relief', 'budget 2025', 'road accident', 'election results')",
+    "  NOT generic (e.g., 'news', 'article', 'Hindi', 'newspaper').",
+    "• Suggested mix: 1–2 topic/event tags + 1 location tag if the clip names a place + 1 person/org tag if prominent.",
+    "",
+    "=== CONFIDENCE ===",
+    "• 0.85–1.0: image is crisp, headline and body text are clearly readable.",
+    "• 0.6–0.84: some text is blurry, small, or partially cut off but the main content is understood.",
+    "• 0.3–0.59: heavily degraded scan, rotated/skewed text, or the selection missed most of the content.",
+  ].join("\n");
+}
+
+/**
+ * Compute Intersection-over-Union for two blocks (percentage coordinate space).
+ * Returns a value in [0, 1]; 0 = no overlap, 1 = identical.
+ */
+function computeIoU(a: SuggestedBlock, b: SuggestedBlock): number {
+  const ax2 = a.x + a.width;
+  const ay2 = a.y + a.height;
+  const bx2 = b.x + b.width;
+  const by2 = b.y + b.height;
+
+  const ix = Math.max(0, Math.min(ax2, bx2) - Math.max(a.x, b.x));
+  const iy = Math.max(0, Math.min(ay2, by2) - Math.max(a.y, b.y));
+  const intersection = ix * iy;
+
+  if (intersection === 0) return 0;
+
+  const union = a.width * a.height + b.width * b.height - intersection;
+
+  return union > 0 ? intersection / union : 0;
+}
+
+/**
+ * Non-maximum suppression: given a list of blocks sorted by descending confidence,
+ * drop any block whose IoU with an already-kept block exceeds `iouThreshold`.
+ * This removes redundant / duplicate overlapping detections while preserving the
+ * highest-confidence block in each overlapping cluster.
+ */
+function suppressOverlaps(blocks: SuggestedBlock[], iouThreshold = 0.15): SuggestedBlock[] {
+  const sorted = [...blocks].sort((a, b) => b.confidence - a.confidence);
+  const kept: SuggestedBlock[] = [];
+
+  for (const block of sorted) {
+    const overlaps = kept.some((k) => computeIoU(block, k) > iouThreshold);
+
+    if (!overlaps) {
+      kept.push(block);
+    }
+  }
+
+  // Restore reading-order sort (top-to-bottom, left-to-right) after NMS
+  return kept.sort((a, b) => {
+    const rowDiff = a.y - b.y;
+
+    return Math.abs(rowDiff) > 3 ? rowDiff : a.x - b.x;
+  });
+}
+
 function normalizeBlocks(blocks: SuggestedBlock[], page: PageAssetResult) {
   const normalized = blocks
-    .filter((block) => block.width > 0 && block.height > 0)
+    // Drop zero-size or impossibly tiny blocks (< 1% × 1%)
+    .filter((block) => block.width >= 1 && block.height >= 1)
+    // Drop very low-confidence noise detections
+    .filter((block) => (block.confidence ?? 1) >= 0.3)
     .map((block, index) => {
       const geometry = normalizeGeometry(block);
 
@@ -660,7 +868,9 @@ function normalizeBlocks(blocks: SuggestedBlock[], page: PageAssetResult) {
       };
     });
 
-  return normalized.length ? normalized : fallbackBlocks(page);
+  const deduped = suppressOverlaps(normalized);
+
+  return deduped.length ? deduped : fallbackBlocks(page);
 }
 
 function fallbackBlocks(page: PageAssetResult): SuggestedBlock[] {
@@ -765,7 +975,7 @@ async function cropPageRegion(
 
   return sharp(imageBuffer)
     .extract({ left, top, width, height })
-    .webp({ quality: 86 })
+    .webp({ quality: 92 })
     .toBuffer();
 }
 
@@ -773,9 +983,10 @@ async function extractDetailsFromCrop(
   croppedWebp: Buffer,
   pageSection: string,
   apiKey: string,
-  editionLocale: { editionCity: string; editionState: string } = {
+  editionLocale: { editionCity: string; editionState: string; editionLanguage?: string } = {
     editionCity: "",
     editionState: "",
+    editionLanguage: "",
   },
 ): Promise<Omit<ExtractedClipDetails, "previewDataUrl">> {
   if (!apiKey) {
@@ -797,18 +1008,11 @@ async function extractDetailsFromCrop(
           content: [
             {
               type: "input_text",
-              text: [
-                "Read this cropped Hindi/English newspaper clip.",
-                "Extract editorial metadata for a publisher workflow.",
-                "Return a concise hotspot label (3-6 words), headline title, section name, short summary, brief OCR body text,",
-                "a specific locality/area/neighborhood mentioned inside the clip (empty string if none),",
-                "and 2-5 topical tags.",
-                `Default section hint: ${pageSection}.`,
-                localeHint
-                  ? `Edition locale hint (city/state for context only): ${localeHint}.`
-                  : "No edition locale hint was provided.",
-                "Only put a value in area when the clip explicitly names a locality smaller than the edition city.",
-              ].join(" "),
+              text: buildClipExtractionPrompt(
+                pageSection,
+                localeHint,
+                editionLocale.editionLanguage,
+              ),
             },
             {
               type: "input_image",

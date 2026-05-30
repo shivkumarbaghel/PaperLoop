@@ -42,19 +42,18 @@ const auth = getAuth(app);
 // ─── Reader personas ───────────────────────────────────────────────────────────
 
 const readerAccounts = [
-  { loginId: "reader-priya", email: "reader-priya@paperloop.test", name: "Priya Reader" },
-  { loginId: "reader-aman",  email: "reader-aman@paperloop.test",  name: "Aman Delhi"   },
-  { loginId: "reader-neha",  email: "reader-neha@paperloop.test",  name: "Neha Subscriber" },
-  { loginId: "reader-ravi",  email: "reader-ravi@paperloop.test",  name: "Ravi Sharma"  },
-  // Extra virtual readers — no auth account needed, just for comment diversity
-  { loginId: "reader-sunil",    email: "reader-sunil@paperloop.test",    name: "Sunil Mishra"   },
-  { loginId: "reader-anjali",   email: "reader-anjali@paperloop.test",   name: "Anjali Tiwari"  },
-  { loginId: "reader-deepak",   email: "reader-deepak@paperloop.test",   name: "Deepak Jha"     },
-  { loginId: "reader-meenu",    email: "reader-meenu@paperloop.test",    name: "Meenu Agarwal"  },
-  { loginId: "reader-tarun",    email: "reader-tarun@paperloop.test",    name: "Tarun Singh"    },
-  { loginId: "reader-kavya",    email: "reader-kavya@paperloop.test",    name: "Kavya Shukla"   },
-  { loginId: "reader-mohit",    email: "reader-mohit@paperloop.test",    name: "Mohit Rawat"    },
-  { loginId: "reader-pooja",    email: "reader-pooja@paperloop.test",    name: "Pooja Dixit"    },
+  { loginId: "reader-priya", email: "reader-priya@paperloop.test", name: "Priya Reader", handle: "priya_reads" },
+  { loginId: "reader-aman", email: "reader-aman@paperloop.test", name: "Aman Delhi", handle: "aman_delhi" },
+  { loginId: "reader-neha", email: "reader-neha@paperloop.test", name: "Neha Subscriber", handle: "neha_subscriber" },
+  { loginId: "reader-ravi", email: "reader-ravi@paperloop.test", name: "Ravi Sharma", handle: "ravi_sharma" },
+  { loginId: "reader-sunil", email: "reader-sunil@paperloop.test", name: "Sunil Mishra", handle: "sunil_mishra" },
+  { loginId: "reader-anjali", email: "reader-anjali@paperloop.test", name: "Anjali Tiwari", handle: "anjali_tiwari" },
+  { loginId: "reader-deepak", email: "reader-deepak@paperloop.test", name: "Deepak Jha", handle: "deepak_jha" },
+  { loginId: "reader-meenu", email: "reader-meenu@paperloop.test", name: "Meenu Agarwal", handle: "meenu_agarwal" },
+  { loginId: "reader-tarun", email: "reader-tarun@paperloop.test", name: "Tarun Singh", handle: "tarun_singh" },
+  { loginId: "reader-kavya", email: "reader-kavya@paperloop.test", name: "Kavya Shukla", handle: "kavya_shukla" },
+  { loginId: "reader-mohit", email: "reader-mohit@paperloop.test", name: "Mohit Rawat", handle: "mohit_rawat" },
+  { loginId: "reader-pooja", email: "reader-pooja@paperloop.test", name: "Pooja Dixit", handle: "pooja_dixit" },
 ];
 
 // ─── Comment bank (Hindi/Hinglish/English mix) ────────────────────────────────
@@ -280,6 +279,25 @@ async function main() {
     return currentBatch;
   }
 
+  readerUsers.forEach((reader) => {
+    nextOp().set(
+      db.collection("users").doc(reader.uid),
+      {
+        id: reader.uid,
+        loginId: reader.loginId,
+        name: reader.name,
+        email: reader.email,
+        handle: reader.handle,
+        avatarUrl: null,
+        provider: "password",
+        role: "reader",
+        status: "active",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+
   let totalComments = 0;
   let totalEngagements = 0;
 
@@ -310,6 +328,12 @@ async function main() {
     commentingReaders.forEach((reader, readerIdx) => {
       const { body, sentiment } = commentBodies[readerIdx];
       const id = `${post.id}-seed-comment-${reader.loginId}`;
+      const commentSeed = pseudoRandom(post.id.charCodeAt(2) + postIdx * 17 + readerIdx * 3);
+      const commentStats = {
+        likes: 1 + Math.floor(commentSeed * 42),
+        shares: commentSeed > 0.72 ? 1 + Math.floor(commentSeed * 4) : 0,
+        saves: commentSeed > 0.45 ? 1 + Math.floor(commentSeed * 3) : 0,
+      };
 
       nextOp().set(
         db.collection("comments").doc(id),
@@ -318,10 +342,14 @@ async function main() {
           ...linkFields,
           userId: reader.uid,
           userName: reader.name,
+          userHandle: `@${reader.handle}`,
+          userAvatarUrl: null,
           body,
           sentiment,
+          stats: commentStats,
           status: "published",
           createdAt: seedDate(postIdx, readerIdx * 11 + 5),
+          createdAtMs: seedDate(postIdx, readerIdx * 11 + 5).getTime(),
           seededAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         },

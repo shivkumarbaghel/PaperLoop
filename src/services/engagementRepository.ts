@@ -1,5 +1,7 @@
 import type { User } from "firebase/auth";
 import { addDoc, collection, getDocs, query, serverTimestamp, where } from "firebase/firestore";
+import { deriveUserHandle } from "../lib/socialProfiles";
+import { resolveCommentTimestamp } from "../lib/socialTime";
 import { getFirebaseServices } from "../firebase";
 import type { ArticlePost, Comment } from "../types";
 
@@ -24,24 +26,10 @@ export async function listArticleComments(articleId: string): Promise<Comment[]>
   );
 
   return snapshot.docs
-    .map((documentSnapshot) => {
-      const data = documentSnapshot.data();
-
-      return {
-        id: documentSnapshot.id,
-        userName: String(data.userName ?? "PaperLoop reader"),
-        body: String(data.body ?? ""),
-        sentiment: (data.sentiment as Comment["sentiment"]) ?? "neutral",
-        createdAt: data.createdAt,
-        status: typeof data.status === "string" ? data.status : "published",
-      };
-    })
+    .map((documentSnapshot) => normalizeComment(documentSnapshot.id, documentSnapshot.data()))
     .filter((comment) => comment.status === "published")
-    .sort((left, right) => commentCreatedTime(right.createdAt) - commentCreatedTime(left.createdAt))
-    .map(({ status: _status, ...comment }) => ({
-      ...comment,
-      createdAt: formatCommentCreatedAt(comment.createdAt),
-    }));
+    .sort((left, right) => resolveCommentTimestamp(right) - resolveCommentTimestamp(left))
+    .map(({ status: _status, ...comment }) => comment);
 }
 
 export async function createArticleComment(
@@ -60,11 +48,19 @@ export async function createArticleComment(
     throw new Error("Comment cannot be empty.");
   }
 
+  const userName = user.displayName ?? user.email ?? "PaperLoop reader";
+  const userHandle = deriveUserHandle(userName, user.email?.split("@")[0] ?? null);
+  const createdAtMs = Date.now();
+
   const localComment: Omit<Comment, "id"> = {
-    userName: user.displayName ?? user.email ?? "PaperLoop reader",
+    userId: user.uid,
+    userName,
+    userHandle,
+    userAvatarUrl: user.photoURL,
     body: trimmedBody,
     sentiment: "neutral",
-    createdAt: "Just now",
+    createdAtMs,
+    stats: { likes: 0, shares: 0, saves: 0 },
   };
 
   const documentRef = await addDoc(collection(firebase.db, "comments"), {
@@ -116,36 +112,39 @@ export async function recordEngagement({
   });
 }
 
-function commentCreatedTime(value: unknown) {
-  if (value && typeof value === "object" && "toMillis" in value) {
-    return (value as { toMillis: () => number }).toMillis();
-  }
+function normalizeComment(id: string, data: Record<string, unknown>) {
+  const createdAtMs = resolveCommentTimestamp({
+    createdAtMs: typeof data.createdAtMs === "number" ? data.createdAtMs : undefined,
+    createdAt: data.createdAt,
+  });
+  const userName = String(data.userName ?? "PaperLoop reader");
+  const stats =
+    data.stats && typeof data.stats === "object"
+      ? {
+          likes: Number((data.stats as { likes?: number }).likes ?? 0),
+          shares: Number((data.stats as { shares?: number }).shares ?? 0),
+          saves: Number((data.stats as { saves?: number }).saves ?? 0),
+        }
+      : { likes: 0, shares: 0, saves: 0 };
 
-  if (typeof value === "string") {
-    return Date.parse(value) || 0;
-  }
-
-  return 0;
-}
-
-function formatCommentCreatedAt(value: unknown) {
-  if (value && typeof value === "object" && "toDate" in value) {
-    return (value as { toDate: () => Date }).toDate().toLocaleString("en-IN", {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  }
-
-  if (typeof value === "string" && value !== "Just now") {
-    const parsed = Date.parse(value);
-
-    if (Number.isFinite(parsed)) {
-      return new Date(parsed).toLocaleString("en-IN", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
-    }
-  }
-
-  return typeof value === "string" ? value : "Recent";
+  return {
+    id,
+    userId: typeof data.userId === "string" ? data.userId : undefined,
+    userName,
+    userHandle:
+      typeof data.userHandle === "string"
+        ? data.userHandle
+        : deriveUserHandle(userName),
+    userAvatarUrl:
+      typeof data.userAvatarUrl === "string"
+        ? data.userAvatarUrl
+        : data.userAvatarUrl === null
+          ? null
+          : undefined,
+    body: String(data.body ?? ""),
+    sentiment: (data.sentiment as Comment["sentiment"]) ?? "neutral",
+    createdAtMs,
+    stats,
+    status: typeof data.status === "string" ? data.status : "published",
+  };
 }
