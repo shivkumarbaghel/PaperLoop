@@ -6564,7 +6564,7 @@ function AdminView({
           accessRule: articleAccessRule,
           discussionRule: articleDiscussionRule,
           hotspotLabel: defaults.hotspotLabel,
-          regenerateClipImage: true,
+          regenerateClipImage: false,
           ...geometry,
         },
         authUser,
@@ -6596,7 +6596,7 @@ function AdminView({
         }
 
         setArticleCreateStatus("success");
-        setArticleCreateMessage("Post updated with the latest clip details.");
+        setArticleCreateMessage("Post updated.");
         return;
       }
 

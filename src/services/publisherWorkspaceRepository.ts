@@ -1342,6 +1342,8 @@ export async function updatePublisherArticlePost(
         }
       : null;
 
+  const pagesChanged = JSON.stringify(nextPages) !== JSON.stringify(edition.pages);
+
   await Promise.all([
     updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), {
       title: updatedArticle.title,
@@ -1365,10 +1367,12 @@ export async function updatePublisherArticlePost(
       updatedAt: serverTimestamp(),
       updatedBy: user.uid,
     }),
-    updateDoc(doc(firebase.db, "editions", edition.id), {
-      pages: nextPages,
-      updatedAt: serverTimestamp(),
-    }),
+    pagesChanged
+      ? updateDoc(doc(firebase.db, "editions", edition.id), {
+          pages: nextPages,
+          updatedAt: serverTimestamp(),
+        })
+      : Promise.resolve(),
     blockUpdates && input.blockId
       ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), blockUpdates)
       : Promise.resolve(),
