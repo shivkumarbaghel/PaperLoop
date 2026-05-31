@@ -1219,19 +1219,25 @@ export async function updatePublisherArticlePost(
     throw new Error("Firebase is not configured.");
   }
 
-  const editionSnapshot = await getDoc(doc(firebase.db, "editions", input.editionId));
+  if (!input.title.trim() || !input.section.trim() || !input.hotspotLabel.trim()) {
+    throw new Error("Title, section, and hotspot label are required.");
+  }
+
+  const [editionSnapshot, articleSnapshot, sourceBlock] = await Promise.all([
+    getDoc(doc(firebase.db, "editions", input.editionId)),
+    getDoc(doc(firebase.db, "articlePosts", input.articleId)),
+    input.blockId ? getArticleBlock(input.blockId) : Promise.resolve(null),
+  ]);
 
   if (!editionSnapshot.exists()) {
     throw new Error("Edition not found for this post.");
   }
 
-  const edition = { id: editionSnapshot.id, ...editionSnapshot.data() } as Edition;
-  const articleSnapshot = await getDoc(doc(firebase.db, "articlePosts", input.articleId));
-
   if (!articleSnapshot.exists()) {
     throw new Error("Article post not found.");
   }
 
+  const edition = { id: editionSnapshot.id, ...editionSnapshot.data() } as Edition;
   const existingArticle = {
     id: articleSnapshot.id,
     ...articleSnapshot.data(),
@@ -1242,17 +1248,40 @@ export async function updatePublisherArticlePost(
     throw new Error("Page not found for this article post.");
   }
 
-  if (!input.title.trim() || !input.section.trim() || !input.hotspotLabel.trim()) {
-    throw new Error("Title, section, and hotspot label are required.");
-  }
-
-  const sourceBlock = input.blockId ? await getArticleBlock(input.blockId) : null;
   const blockGeometry = normalizeGeometry({
     x: input.x,
     y: input.y,
     width: input.width,
     height: input.height,
   });
+  const existingHotspot = page.hotspots.find(
+    (hotspot) => hotspot.articleId === existingArticle.id,
+  );
+  const referenceGeometry =
+    existingArticle.blockGeometry ??
+    (existingHotspot
+      ? {
+          x: existingHotspot.x,
+          y: existingHotspot.y,
+          width: existingHotspot.width,
+          height: existingHotspot.height,
+        }
+      : null) ??
+    (sourceBlock
+      ? {
+          x: sourceBlock.x,
+          y: sourceBlock.y,
+          width: sourceBlock.width,
+          height: sourceBlock.height,
+        }
+      : null);
+  const geometryChanged = Boolean(
+    referenceGeometry && !geometriesEqual(referenceGeometry, blockGeometry),
+  );
+  const hotspotLabelChanged =
+    (existingHotspot?.label ?? existingArticle.title).trim() !== input.hotspotLabel.trim();
+  const shouldRegenerateClip = Boolean(input.regenerateClipImage) || geometryChanged;
+  const needsEditionUpdate = shouldRegenerateClip || hotspotLabelChanged;
   const locale = normalizeArticleLocaleFields(
     {
       city: edition.city,
@@ -1262,9 +1291,6 @@ export async function updatePublisherArticlePost(
     sourceBlock ?? undefined,
     existingArticle,
   );
-  const geometryChanged =
-    JSON.stringify(existingArticle.blockGeometry ?? null) !== JSON.stringify(blockGeometry);
-  const shouldRegenerateClip = input.regenerateClipImage || geometryChanged;
   const clippedAsset = shouldRegenerateClip
     ? await createClippedArticleImage({
         edition,
@@ -1273,27 +1299,6 @@ export async function updatePublisherArticlePost(
         geometry: blockGeometry,
       })
     : null;
-  const hotspot: ArticleHotspot = {
-    id: `${existingArticle.id}-hotspot`,
-    articleId: existingArticle.id,
-    label: input.hotspotLabel.trim(),
-    ...blockGeometry,
-    blockId: input.blockId ?? existingArticle.sourceBlockId,
-    clippedImageUrl: clippedAsset?.url ?? existingArticle.clippedImageUrl,
-  };
-  const nextPages = edition.pages.map((editionPage) =>
-    editionPage.id === page.id
-      ? {
-          ...editionPage,
-          hotspots: [
-            ...editionPage.hotspots.filter(
-              (existingHotspot) => existingHotspot.articleId !== existingArticle.id,
-            ),
-            hotspot,
-          ],
-        }
-      : editionPage,
-  );
   const updatedArticle: ArticlePost = {
     ...existingArticle,
     title: input.title.trim(),
@@ -1317,6 +1322,28 @@ export async function updatePublisherArticlePost(
       topics: locale.tags.length ? locale.tags : [input.section.trim()],
     },
   };
+  const articleUpdatePayload = {
+    title: updatedArticle.title,
+    section: updatedArticle.section,
+    summary: updatedArticle.summary,
+    body: updatedArticle.body,
+    city: updatedArticle.city,
+    state: updatedArticle.state,
+    area: updatedArticle.area,
+    tags: updatedArticle.tags,
+    clippedImageTone: updatedArticle.clippedImageTone,
+    clippedImageUrl: updatedArticle.clippedImageUrl,
+    clippedImagePath: updatedArticle.clippedImagePath,
+    blockGeometry,
+    accessRule: updatedArticle.accessRule,
+    discussionRule: updatedArticle.discussionRule,
+    author: updatedArticle.author,
+    ...(input.editorId !== undefined
+      ? { editorId: input.editorId || null }
+      : {}),
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  };
   const blockUpdates =
     input.blockId && sourceBlock
       ? {
@@ -1329,56 +1356,101 @@ export async function updatePublisherArticlePost(
           state: locale.state,
           area: locale.area,
           tags: locale.tags,
-      ...(input.editorId !== undefined
-        ? { editorId: input.editorId || null }
-        : {}),
+          ...(input.editorId !== undefined
+            ? { editorId: input.editorId || null }
+            : {}),
           ...(input.authorName?.trim()
             ? { authorName: input.authorName.trim() }
             : {}),
-          ...blockGeometry,
-          clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
-          clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
+          ...(needsEditionUpdate
+            ? {
+                ...blockGeometry,
+                clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
+                clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
+              }
+            : {}),
           updatedAt: serverTimestamp(),
         }
       : null;
+  const nextBlock =
+    sourceBlock && blockUpdates
+      ? ({
+          ...sourceBlock,
+          type: blockUpdates.type,
+          title: blockUpdates.title,
+          section: blockUpdates.section,
+          summary: blockUpdates.summary,
+          body: blockUpdates.body,
+          city: blockUpdates.city,
+          state: blockUpdates.state,
+          area: blockUpdates.area,
+          tags: blockUpdates.tags,
+          ...(input.editorId !== undefined
+            ? { editorId: input.editorId || undefined }
+            : {}),
+          ...(input.authorName?.trim()
+            ? { authorName: input.authorName.trim() }
+            : {}),
+          ...(needsEditionUpdate
+            ? {
+                x: blockGeometry.x,
+                y: blockGeometry.y,
+                width: blockGeometry.width,
+                height: blockGeometry.height,
+                clippedImageUrl: clippedAsset?.url ?? sourceBlock.clippedImageUrl,
+                clippedImagePath: clippedAsset?.path ?? sourceBlock.clippedImagePath,
+              }
+            : {}),
+        } as ArticleBlock)
+      : sourceBlock;
 
-  const pagesChanged = JSON.stringify(nextPages) !== JSON.stringify(edition.pages);
+  if (!needsEditionUpdate) {
+    await Promise.all([
+      updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), articleUpdatePayload),
+      blockUpdates && input.blockId
+        ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), blockUpdates)
+        : Promise.resolve(),
+    ]);
+
+    return {
+      article: updatedArticle,
+      edition,
+      block: nextBlock,
+    };
+  }
+
+  const hotspot: ArticleHotspot = {
+    id: `${existingArticle.id}-hotspot`,
+    articleId: existingArticle.id,
+    label: input.hotspotLabel.trim(),
+    ...blockGeometry,
+    blockId: input.blockId ?? existingArticle.sourceBlockId,
+    clippedImageUrl: clippedAsset?.url ?? existingArticle.clippedImageUrl,
+  };
+  const nextPages = edition.pages.map((editionPage) =>
+    editionPage.id === page.id
+      ? {
+          ...editionPage,
+          hotspots: [
+            ...editionPage.hotspots.filter(
+              (existingHotspot) => existingHotspot.articleId !== existingArticle.id,
+            ),
+            hotspot,
+          ],
+        }
+      : editionPage,
+  );
 
   await Promise.all([
-    updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), {
-      title: updatedArticle.title,
-      section: updatedArticle.section,
-      summary: updatedArticle.summary,
-      body: updatedArticle.body,
-      city: updatedArticle.city,
-      state: updatedArticle.state,
-      area: updatedArticle.area,
-      tags: updatedArticle.tags,
-      clippedImageTone: updatedArticle.clippedImageTone,
-      clippedImageUrl: updatedArticle.clippedImageUrl,
-      clippedImagePath: updatedArticle.clippedImagePath,
-      blockGeometry,
-      accessRule: updatedArticle.accessRule,
-      discussionRule: updatedArticle.discussionRule,
-      author: updatedArticle.author,
-      ...(input.editorId !== undefined
-        ? { editorId: input.editorId || null }
-        : {}),
+    updateDoc(doc(firebase.db, "articlePosts", existingArticle.id), articleUpdatePayload),
+    updateDoc(doc(firebase.db, "editions", edition.id), {
+      pages: nextPages,
       updatedAt: serverTimestamp(),
-      updatedBy: user.uid,
     }),
-    pagesChanged
-      ? updateDoc(doc(firebase.db, "editions", edition.id), {
-          pages: nextPages,
-          updatedAt: serverTimestamp(),
-        })
-      : Promise.resolve(),
     blockUpdates && input.blockId
       ? updateDoc(doc(firebase.db, "articleBlocks", input.blockId), blockUpdates)
       : Promise.resolve(),
   ]);
-
-  const block = input.blockId ? await getArticleBlock(input.blockId) : null;
 
   return {
     article: updatedArticle,
@@ -1386,7 +1458,7 @@ export async function updatePublisherArticlePost(
       ...edition,
       pages: nextPages,
     },
-    block,
+    block: nextBlock,
   };
 }
 
@@ -1770,6 +1842,21 @@ function normalizeGeometry(
   const height = Math.max(1, Math.min(clampPercent(geometry.height), 100 - y));
 
   return { x, y, width, height };
+}
+
+function geometriesEqual(
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) {
+  const normalizedLeft = normalizeGeometry(left);
+  const normalizedRight = normalizeGeometry(right);
+
+  return (
+    normalizedLeft.x === normalizedRight.x &&
+    normalizedLeft.y === normalizedRight.y &&
+    normalizedLeft.width === normalizedRight.width &&
+    normalizedLeft.height === normalizedRight.height
+  );
 }
 
 function validateDraftInput(input: EditionDraftInput) {
