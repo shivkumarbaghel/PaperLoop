@@ -1517,7 +1517,6 @@ function Dashboard({
       <section className="workspace-panel" id="newspapers">
         <div className="section-heading">
           <span className="eyebrow">Newspaper discovery</span>
-          <h2>Leading papers and local editions</h2>
         </div>
 
         <div className="filters">
