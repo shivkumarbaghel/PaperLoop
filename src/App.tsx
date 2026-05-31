@@ -530,6 +530,38 @@ function newspaperReaderPathForEdition(editionId: string, pageIndex = 0) {
   return pageIndex > 0 ? `${basePath}?page=${pageIndex}` : basePath;
 }
 
+function resolveDefaultReaderArticle(
+  edition: Edition | undefined,
+  articles: ArticlePost[],
+  profile: UserProfile | null,
+  userAccess: UserAccess,
+) {
+  if (!edition) {
+    return undefined;
+  }
+
+  for (const page of edition.pages) {
+    const pageArticles = getReadablePageArticles(
+      articles,
+      edition,
+      page,
+      profile,
+      userAccess,
+    );
+
+    if (pageArticles.length > 0) {
+      return pageArticles[0];
+    }
+  }
+
+  return articles.find(
+    (article) =>
+      article.editionId === edition.id &&
+      article.status === "published" &&
+      canReadArticle(article, profile, userAccess),
+  );
+}
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -882,7 +914,27 @@ function App() {
       return;
     }
 
-    applyNewspaperReaderContext(publisher, publisherEditionsForReader[0], 0);
+    const targetEdition = publisherEditionsForReader[0];
+    const defaultArticle = resolveDefaultReaderArticle(
+      targetEdition,
+      articles,
+      profile,
+      userAccess,
+    );
+
+    if (defaultArticle) {
+      const targetPageIndex = resolveReaderPageIndex(defaultArticle, targetEdition);
+      applyNewspaperReaderContext(publisher, targetEdition, targetPageIndex);
+      navigate(newspaperReaderPathForArticle(defaultArticle.id));
+      return;
+    }
+
+    if (targetEdition) {
+      applyNewspaperReaderContext(publisher, targetEdition, 0);
+      navigate(newspaperReaderPathForEdition(targetEdition.id));
+      return;
+    }
+
     navigate("/reader");
   }
 
